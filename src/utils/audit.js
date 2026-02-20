@@ -1,24 +1,25 @@
 const pool = require("../config/db");
 
 /**
- * Log an audit event to the database.
- * @param {string} action - The action performed (e.g., "user.create", "device.enroll").
- * @param {number} actorId - ID of the user performing the action.
- * @param {string} targetId - ID of the target resource (e.g., userId, deviceId).
- * @param {string} targetType - Type of the target (e.g., "USER", "DEVICE", "ARTIFACT").
- * @param {Object} details - Additional JSON details about the event.
- * @param {string} ipAddress - IP address of the request.
+ * Log a system action to the audit_logs table
+ * @param {string} tenantId - The UUID of the tenant
+ * @param {string} userId - The UUID of the user (actor)
+ * @param {string} action - The action string (e.g. 'user.invite')
+ * @param {string} resourceType - The type of resource (e.g. 'device', 'user')
+ * @param {string} resourceId - The UUID of the target resource
+ * @param {object} newValues - The state of the resource after change
+ * @param {object} oldValues - The state of the resource before change
  */
-exports.logAudit = async (action, actorId, targetId, targetType, details, ipAddress) => {
+exports.logAudit = async (tenantId, userId, action, resourceType, resourceId, newValues, oldValues = null) => {
     try {
         await pool.query(
-            `INSERT INTO audit_logs (action, actor_id, target_id, target_type, details, ip_address)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [action, actorId, targetId, targetType, JSON.stringify(details), ipAddress]
+            `INSERT INTO audit_logs 
+       (tenant_id, user_id, action, resource_type, resource_id, new_values, old_values)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [tenantId, userId, action, resourceType, resourceId, JSON.stringify(newValues), oldValues ? JSON.stringify(oldValues) : null]
         );
-        console.log(`📝 AUDIT: ${action} by User ${actorId} on ${targetType}:${targetId}`);
     } catch (error) {
-        console.error("⚠️ Audit Log Error:", error);
-        // We log error but don't throw, to avoid breaking the main flow
+        console.error("Audit Logging Failed:", error);
+        // We don't throw here to avoid crashing the main request flow
     }
 };

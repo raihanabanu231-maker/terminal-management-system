@@ -1,42 +1,68 @@
 const pool = require("../../config/db");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 
 exports.login = async (req, res) => {
   const { email, password } = req.body;
 
   try {
+    // 1. Fetch user by email and tenant isolation check if needed
+    // In this schema, email is unique per tenant_id, so we select all matches
     const result = await pool.query(
-      "SELECT * FROM users WHERE email = $1 AND status = 'ACTIVE'",
+      "SELECT * FROM users WHERE email = $1 AND deleted_at IS NULL AND status = 'active'",
       [email]
     );
 
     if (result.rows.length === 0) {
       return res.status(400).json({
         success: false,
-        message: "User not found or inactive"
+        message: "User not found or account disabled"
       });
     }
 
     const user = result.rows[0];
 
-    const isMatch = await bcrypt.compare(password, user.password);
+    // 2. Check password
+    const isMatch = await bcrypt.compare(password, user.password_hash);
 
     if (!isMatch) {
       return res.status(400).json({
         success: false,
-        message: "Invalid password"
+        message: "Invalid credentials"
       });
     }
 
+    // 3. Fetch user roles for the JWT
+    // This allows us to include specific role IDs and names
+    const roleResult = await pool.query(
+      `SELECT r.name, ur.role_id, ur.scope_type, ur.scope_id 
+       FROM user_roles ur
+       JOIN roles r ON ur.role_id = r.id
+       WHERE ur.user_id = $1`,
+      [user.id]
+    );
+
+    const roles = roleResult.rows;
+
+    // 4. Generate JWT
     const token = jwt.sign(
       {
         id: user.id,
-        role: user.role,
-        tenant_id: user.tenant_id
+        tenant_id: user.tenant_id,
+        roles: roles.map(r => ({ name: r.name, id: r.role_id, scope: r.scope_type })),
+        // For backwards compatibility with middleware expecting user.role
+        role: roles[0]?.name.toUpperCase().replace(" ", "_") || "USER"
       },
       process.env.JWT_SECRET,
-      { expiresIn: "1h" }
+      { expiresIn: "8h" }
+    );
+
+    // 5. Track Session (Optional but recommended by schema)
+    const jti = crypto.randomUUID();
+    await pool.query(
+      "INSERT INTO user_sessions (user_id, jti, ip_address, user_agent) VALUES ($1, $2, $3, $4)",
+      [user.id, jti, req.ip, req.get('user-agent')]
     );
 
     res.json({
@@ -55,13 +81,16 @@ exports.login = async (req, res) => {
 };
 
 exports.registerWithInvite = async (req, res) => {
-  const { token, password, name } = req.body;
+  const { token, password, first_name, last_name } = req.body;
 
   try {
-    // 1. Validate Invite Token
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+    // 1. Validate Invite
     const inviteResult = await pool.query(
-      "SELECT * FROM user_invitations WHERE token = $1 AND accepted_at IS NULL AND expires_at > NOW()",
-      [token]
+      `SELECT * FROM user_invitations 
+       WHERE token_hash = $1 AND status = 'pending' AND expires_at > NOW()`,
+      [tokenHash]
     );
 
     if (inviteResult.rows.length === 0) {
@@ -73,32 +102,61 @@ exports.registerWithInvite = async (req, res) => {
 
     const invite = inviteResult.rows[0];
 
-    // 2. Check if user already exists
-    const existingUser = await pool.query("SELECT * FROM users WHERE email = $1", [invite.email]);
-    if (existingUser.rows.length > 0) {
-      return res.status(400).json({ success: false, message: "User with this email already exists" });
-    }
-
-    // 3. Hash Password
+    // 2. Hash Password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // 4. Create User
-    await pool.query(
-      `INSERT INTO users (name, email, password, role, tenant_id, merchant_id, status)
-       VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE')`,
-      [name || invite.email.split('@')[0], invite.email, hashedPassword, invite.role, invite.tenant_id, invite.scope_merchant_id]
-    );
+    // 3. Create User in Transaction
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
 
-    // 5. Mark Invitation as Accepted
-    await pool.query(
-      "UPDATE user_invitations SET accepted_at = NOW() WHERE id = $1",
-      [invite.id]
-    );
+      // Check if user exists (soft deleted might be an issue, we use email per tenant uniqueness)
+      const existing = await client.query("SELECT id FROM users WHERE email = $1 AND tenant_id = $2", [invite.email, invite.tenant_id]);
 
-    res.json({
-      success: true,
-      message: "Registration successful. You can now login."
-    });
+      let userId;
+      if (existing.rows.length > 0) {
+        // If the user already existed (perhaps were added manually but not registered)
+        userId = existing.rows[0].id;
+        await client.query(
+          "UPDATE users SET password_hash = $1, first_name = $2, last_name = $3, status = 'active', invited = false WHERE id = $4",
+          [hashedPassword, first_name, last_name, userId]
+        );
+      } else {
+        const userRes = await client.query(
+          `INSERT INTO users (tenant_id, email, password_hash, first_name, last_name, status, invited)
+             VALUES ($1, $2, $3, $4, $5, 'active', false)
+             RETURNING id`,
+          [invite.tenant_id, invite.email, hashedPassword, first_name, last_name]
+        );
+        userId = userRes.rows[0].id;
+      }
+
+      // 4. Assign Role from Invitation
+      await client.query(
+        `INSERT INTO user_roles (user_id, role_id, scope_type, scope_id)
+         VALUES ($1, $2, $3, $4)`,
+        [userId, invite.role_id, invite.scope_type, invite.scope_id]
+      );
+
+      // 5. Success - Mark as Accepted
+      await client.query(
+        "UPDATE user_invitations SET status = 'accepted' WHERE id = $1",
+        [invite.id]
+      );
+
+      await client.query("COMMIT");
+
+      res.json({
+        success: true,
+        message: "Registration successful"
+      });
+
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
 
   } catch (error) {
     console.error("Register Error:", error);

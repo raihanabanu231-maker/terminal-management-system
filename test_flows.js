@@ -9,7 +9,7 @@ let merchantId;
 
 async function runFlow() {
     try {
-        console.log("\n🚀 Starting End-to-End Flow Test...\n");
+        console.log("\n🚀 Starting Production Flow Test (UUID Schema)...\n");
 
         const suffix = Date.now();
         const adminEmail = `admin${suffix}@alpha.com`;
@@ -36,9 +36,10 @@ async function runFlow() {
         console.log(`\n3️⃣  Inviting Tenant Admin (${adminEmail})...`);
         const inviteAdminRes = await axios.post(`${BASE_URL}/users/invite`, {
             email: adminEmail,
-            role: "TENANT_ADMIN",
+            role_name: "Tenant Admin", // Using new Role Name
             tenant_id: tenantId,
-            name: "Alpha Admin"
+            first_name: "Alpha",
+            last_name: "Admin"
         }, { headers: { Authorization: `Bearer ${superToken}` } });
 
         const adminInviteToken = inviteAdminRes.data.invite_token;
@@ -49,7 +50,8 @@ async function runFlow() {
         await axios.post(`${BASE_URL}/auth/register`, {
             token: adminInviteToken,
             password: "admin",
-            name: "Alpha Admin"
+            first_name: "Alpha",
+            last_name: "Admin"
         });
         console.log("✅ Tenant Admin Registered");
 
@@ -62,7 +64,7 @@ async function runFlow() {
         tenantAdminToken = adminLoginRes.data.token;
         console.log("✅ Tenant Admin Logged In");
 
-        // 6. Create Merchant (Scope)
+        // 6. Create Merchant
         console.log("\n6️⃣  Creating Merchant 'Riyadh Region'...");
         const merchantRes = await axios.post(`${BASE_URL}/merchants`, {
             name: "Riyadh Region"
@@ -74,9 +76,10 @@ async function runFlow() {
         console.log(`\n7️⃣  Inviting Scoped Operator (${operatorEmail})...`);
         const inviteOpRes = await axios.post(`${BASE_URL}/users/invite`, {
             email: operatorEmail,
-            role: "OPERATOR",
+            role_name: "Operator",
             merchant_id: merchantId,
-            name: "Operator User"
+            first_name: "Operator",
+            last_name: "User"
         }, { headers: { Authorization: `Bearer ${tenantAdminToken}` } });
 
         const opInviteToken = inviteOpRes.data.invite_token;
@@ -87,7 +90,8 @@ async function runFlow() {
         await axios.post(`${BASE_URL}/auth/register`, {
             token: opInviteToken,
             password: "admin",
-            name: "Operator User"
+            first_name: "Operator",
+            last_name: "User"
         });
         console.log("✅ Operator Registered");
 

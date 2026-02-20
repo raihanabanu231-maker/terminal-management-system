@@ -1,5 +1,6 @@
 require("dotenv").config();
 const { Pool } = require("pg");
+const bcrypt = require("bcrypt");
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -7,143 +8,362 @@ const pool = new Pool({
 });
 
 async function initDB() {
+  const client = await pool.connect();
   try {
-    console.log("Initializing Database...");
+    console.log("🚀 Starting Production Database Initialization...");
+
+    // ⚠️ WARNING: CLEAN SLATE FOR NEW SCHEMA
+    // Drop existing tables to avoid conflict with old integer-based schema
+    await client.query(`
+      DROP TABLE IF EXISTS audit_logs CASCADE;
+      DROP TABLE IF EXISTS artifacts CASCADE;
+      DROP TABLE IF EXISTS commands CASCADE;
+      DROP TABLE IF EXISTS group_devices CASCADE;
+      DROP TABLE IF EXISTS device_groups CASCADE;
+      DROP TABLE IF EXISTS devices CASCADE;
+      DROP TABLE IF EXISTS device_profiles CASCADE;
+      DROP TABLE IF EXISTS user_invitations CASCADE;
+      DROP TABLE IF EXISTS user_roles CASCADE;
+      DROP TABLE IF EXISTS roles CASCADE;
+      DROP TABLE IF EXISTS user_sessions CASCADE;
+      DROP TABLE IF EXISTS users CASCADE;
+      DROP TABLE IF EXISTS merchants CASCADE;
+      DROP TABLE IF EXISTS tenants CASCADE;
+      DROP TABLE IF EXISTS entitlements CASCADE;
+      DROP TABLE IF EXISTS tenant_entitlements CASCADE;
+      DROP TABLE IF EXISTS device_incidents CASCADE;
+      DROP TABLE IF EXISTS incident_events CASCADE;
+      DROP TABLE IF EXISTS data_deletion_requests CASCADE;
+    `);
+    console.log("🗑️ Cleared existing tables for fresh schema.");
+
+    await client.query("BEGIN");
+
+    // Enable Extensions
+    await client.query(`CREATE EXTENSION IF NOT EXISTS "pgcrypto";`);
+    await client.query(`CREATE EXTENSION IF NOT EXISTS "postgis";`);
+    console.log("✅ Extensions enabled (pgcrypto, postgis).");
 
     // 1. Tenants Table
-    await pool.query(`
+    await client.query(`
       CREATE TABLE IF NOT EXISTS tenants (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(255) NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    console.log("Checked/Created 'tenants' table.");
 
     // 2. Merchants Table
-    await pool.query(`
+    await client.query(`
       CREATE TABLE IF NOT EXISTS merchants (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(255) NOT NULL,
-        tenant_id INTEGER REFERENCES tenants(id),
-        parent_id INTEGER REFERENCES merchants(id),
-        path TEXT,
-        level INTEGER DEFAULT 0,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        parent_id UUID REFERENCES merchants(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        external_id TEXT,
+        level INTEGER NOT NULL DEFAULT 0,
+        path TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    console.log("Checked/Created 'merchants' table.");
 
-    // 3. User Invitations Table (New for Flow 1 & 2)
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS user_invitations (
-        id SERIAL PRIMARY KEY,
-        email VARCHAR(255) NOT NULL,
-        role VARCHAR(50) NOT NULL,
-        tenant_id INTEGER REFERENCES tenants(id),
-        scope_merchant_id INTEGER REFERENCES merchants(id),
-        token VARCHAR(255) NOT NULL UNIQUE,
-        expires_at TIMESTAMP NOT NULL,
-        accepted_at TIMESTAMP,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
+    // Merchant Path Trigger Function
+    await client.query(`
+      CREATE OR REPLACE FUNCTION update_merchant_path()
+      RETURNS TRIGGER AS $$
+      DECLARE
+        parent_rec RECORD;
+      BEGIN
+        IF NEW.parent_id IS NULL THEN
+          NEW.path = '/' || NEW.id::TEXT;
+          NEW.level = 0;
+        ELSE
+          SELECT path, level INTO parent_rec FROM merchants WHERE id = NEW.parent_id;
+          IF NOT FOUND THEN
+            RAISE EXCEPTION 'Parent merchant not found';
+          END IF;
+          NEW.path = parent_rec.path || '/' || NEW.id::TEXT;
+          NEW.level = parent_rec.level + 1;
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
     `);
-    console.log("Checked/Created 'user_invitations' table.");
 
-    // 4. Users Table
-    await pool.query(`
+    await client.query(`
+      DROP TRIGGER IF EXISTS trg_merchant_path ON merchants;
+      CREATE TRIGGER trg_merchant_path
+      BEFORE INSERT OR UPDATE OF parent_id ON merchants
+      FOR EACH ROW EXECUTE FUNCTION update_merchant_path();
+    `);
+
+    // 3. Users Table
+    await client.query(`
       CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(255),
-        email VARCHAR(255) UNIQUE NOT NULL,
-        password VARCHAR(255),
-        role VARCHAR(50) NOT NULL,
-        tenant_id INTEGER REFERENCES tenants(id),
-        merchant_id INTEGER REFERENCES merchants(id),
-        status VARCHAR(20) DEFAULT 'ACTIVE',
-        invite_token VARCHAR(255),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        email TEXT NOT NULL,
+        password_hash TEXT,
+        first_name TEXT,
+        last_name TEXT,
+        mobile TEXT,
+        invited BOOLEAN NOT NULL DEFAULT false,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        deleted_at TIMESTAMPTZ,
+        UNIQUE(tenant_id, email)
       );
     `);
-    console.log("Checked/Created 'users' table.");
 
-    // 5. Devices Table (Updated for Flow 3)
-    await pool.query(`
+    // 4. User Sessions
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS user_sessions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        jti TEXT NOT NULL UNIQUE,
+        ip_address INET,
+        user_agent TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        invalidated_at TIMESTAMPTZ
+      );
+    `);
+
+    // 5. Roles
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS roles (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        permissions TEXT[] NOT NULL DEFAULT '{}'
+      );
+    `);
+
+    // 6. User Roles
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS user_roles (
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        role_id UUID NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+        scope_type TEXT NOT NULL CHECK (scope_type IN ('tenant', 'merchant')),
+        scope_id UUID NOT NULL,
+        PRIMARY KEY (user_id, role_id, scope_id)
+      );
+    `);
+
+    // 7. User Invitations
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS user_invitations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        merchant_id UUID REFERENCES merchants(id) ON DELETE SET NULL,
+        email TEXT NOT NULL,
+        role_id UUID NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+        scope_type TEXT NOT NULL CHECK (scope_type IN ('tenant', 'merchant')),
+        scope_id UUID NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TIMESTAMPTZ NOT NULL,
+        created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        status TEXT NOT NULL DEFAULT 'pending'
+      );
+    `);
+
+    // 8. Entitlements
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS entitlements (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT
+      );
+    `);
+
+    // 9. Tenant Entitlements
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS tenant_entitlements (
+        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        entitlement_id TEXT NOT NULL REFERENCES entitlements(id) ON DELETE CASCADE,
+        enabled BOOLEAN NOT NULL DEFAULT false,
+        source TEXT NOT NULL DEFAULT 'manual',
+        expires_at TIMESTAMPTZ,
+        PRIMARY KEY (tenant_id, entitlement_id)
+      );
+    `);
+
+    // 10. Device Profiles
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS device_profiles (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        config JSONB NOT NULL DEFAULT '{}',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    // 11. Devices
+    await client.query(`
       CREATE TABLE IF NOT EXISTS devices (
-        id SERIAL PRIMARY KEY,
-        serial_number VARCHAR(255) UNIQUE NOT NULL,
-        status VARCHAR(50) DEFAULT 'PENDING',
-        enrollment_token VARCHAR(255),
-        enrollment_token_expires TIMESTAMP,
-        device_token_hash VARCHAR(255),
-        merchant_id INTEGER REFERENCES merchants(id),
-        tenant_id INTEGER REFERENCES tenants(id),
-        last_seen TIMESTAMP,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        serial TEXT NOT NULL UNIQUE,
+        model TEXT NOT NULL,
+        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        merchant_id UUID REFERENCES merchants(id) ON DELETE SET NULL,
+        profile_id UUID REFERENCES device_profiles(id) ON DELETE SET NULL,
+        status TEXT NOT NULL DEFAULT 'pending_onboard',
+        last_seen TIMESTAMPTZ,
+        last_location GEOGRAPHY(POINT, 4326),
+        device_token_hash TEXT,
+        enrollment_token_used TEXT,
+        token_issued_at TIMESTAMPTZ DEFAULT NOW(),
+        token_revoked_at TIMESTAMPTZ,
+        deleted_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
 
-    // Add columns if they don't exist (for existing tables)
-    await pool.query(`
-      ALTER TABLE devices ADD COLUMN IF NOT EXISTS enrollment_token VARCHAR(255);
-      ALTER TABLE devices ADD COLUMN IF NOT EXISTS enrollment_token_expires TIMESTAMP;
-      ALTER TABLE devices ADD COLUMN IF NOT EXISTS device_token_hash VARCHAR(255);
-      ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP;
+    // 12. Device Groups
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS device_groups (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        merchant_id UUID REFERENCES merchants(id) ON DELETE SET NULL,
+        name TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
     `);
 
-    console.log("Checked/Created 'devices' table.");
+    // 13. Group Devices
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS group_devices (
+        group_id UUID NOT NULL REFERENCES device_groups(id) ON DELETE CASCADE,
+        device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        PRIMARY KEY (group_id, device_id)
+      );
+    `);
 
-    // 6. Commands Table (For Flow 5)
-    await pool.query(`
+    // 14. Commands
+    await client.query(`
       CREATE TABLE IF NOT EXISTS commands (
-        id SERIAL PRIMARY KEY,
-        device_id INTEGER REFERENCES devices(id),
-        command_type VARCHAR(50) NOT NULL,
-        payload JSONB,
-        status VARCHAR(50) DEFAULT 'QUEUED',
-        sent_at TIMESTAMP,
-        acked_at TIMESTAMP,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        type TEXT NOT NULL,
+        payload JSONB NOT NULL DEFAULT '{}',
+        status TEXT NOT NULL DEFAULT 'queued',
+        sent_at TIMESTAMPTZ,
+        acked_at TIMESTAMPTZ,
+        created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    console.log("Checked/Created 'commands' table.");
 
-    // 7. Artifacts Table (For Flow 6: App/Firmware Deployment)
-    await pool.query(`
+    // 15. Artifacts
+    await client.query(`
       CREATE TABLE IF NOT EXISTS artifacts (
-        id SERIAL PRIMARY KEY,
-        tenant_id INTEGER REFERENCES tenants(id),
-        name VARCHAR(255) NOT NULL,
-        version VARCHAR(50) NOT NULL,
-        binary_path VARCHAR(500) NOT NULL,
-        status VARCHAR(50) DEFAULT 'DRAFT',
-        created_by INTEGER REFERENCES users(id),
-        approved_by INTEGER REFERENCES users(id),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        published_at TIMESTAMP
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        version TEXT NOT NULL,
+        type TEXT NOT NULL CHECK (type IN ('app', 'firmware')),
+        binary_path TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'draft',
+        approved_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        approved_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    console.log("Checked/Created 'artifacts' table.");
 
-    // 8. Audit Logs Table
-    await pool.query(`
+    // 16. Device Incidents
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS device_incidents (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        merchant_id UUID REFERENCES merchants(id) ON DELETE SET NULL,
+        type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open',
+        first_seen TIMESTAMPTZ NOT NULL,
+        resolved_at TIMESTAMPTZ,
+        resolution_summary TEXT,
+        resolved_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        ai_suggestion_used BOOLEAN NOT NULL DEFAULT false,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    // 17. Incident Events
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS incident_events (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        incident_id UUID NOT NULL REFERENCES device_incidents(id) ON DELETE CASCADE,
+        event_type TEXT NOT NULL,
+        payload JSONB NOT NULL DEFAULT '{}',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    // 18. Audit Logs
+    await client.query(`
       CREATE TABLE IF NOT EXISTS audit_logs (
-        id SERIAL PRIMARY KEY,
-        action VARCHAR(100) NOT NULL,
-        actor_id INTEGER REFERENCES users(id),
-        target_id VARCHAR(50),
-        target_type VARCHAR(50),
-        details JSONB,
-        ip_address VARCHAR(50),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        action TEXT NOT NULL,
+        resource_type TEXT NOT NULL,
+        resource_id UUID NOT NULL,
+        old_values JSONB,
+        new_values JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    console.log("Checked/Created 'audit_logs' table.");
 
-    console.log("Database Initialization Complete.");
-    pool.end();
+    // 19. Data Deletion Requests
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS data_deletion_requests (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID NOT NULL REFERENCES tenants(id),
+        requester_id UUID NOT NULL REFERENCES users(id),
+        status TEXT NOT NULL DEFAULT 'pending',
+        requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        completed_at TIMESTAMPTZ
+      );
+    `);
+
+    // Performance Indexes
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_merchants_path ON merchants USING btree (path text_pattern_ops);
+      CREATE INDEX IF NOT EXISTS idx_devices_serial ON devices(serial);
+      CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+      CREATE INDEX IF NOT EXISTS idx_audit_logs_resource ON audit_logs(resource_type, resource_id);
+    `);
+
+    // Seed Initial Roles (System Level)
+    await client.query(`
+      INSERT INTO roles (tenant_id, name, permissions)
+      VALUES 
+        (NULL, 'Super Admin', '{*}'),
+        (NULL, 'Tenant Admin', '{tenant.*, merchant.*, device.*}'),
+        (NULL, 'Operator', '{device.view, device.command}')
+      ON CONFLICT DO NOTHING;
+    `);
+
+    // Seed Initial Entitlements
+    await client.query(`
+      INSERT INTO entitlements (id, name, description)
+      VALUES 
+        ('device_groups', 'Device Groups', 'Allows logical grouping of devices'),
+        ('remote_view', 'Remote View', 'Allows real-time remote screen viewing'),
+        ('app_deployment', 'App Deployment', 'Allows pushing APKs to devices')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+
+    await client.query("COMMIT");
+    console.log("✅ Database Schema Initialized Successfully.");
+
   } catch (err) {
-    console.error("Error initializing DB:", err);
+    await client.query("ROLLBACK");
+    console.error("❌ Error initializing DB:", err);
+  } finally {
+    client.release();
     pool.end();
   }
 }

@@ -1,24 +1,16 @@
 const pool = require("../../config/db");
 const { sendCommand } = require("../../gateway/socket.gateway");
+const { logAudit } = require("../../utils/audit");
 const fs = require("fs");
 const path = require("path");
 
-// Simplified Storage Helper (Mock MinIO)
-// In a real app, use AWS SDK for S3/MinIO
-const storeFile = (file) => {
-    // For now, assume it's stored locally by multer, and we generate a local URL
-    return `/uploads/${file.filename}`;
-};
-
 const gernateMockPresignedUrl = (filepath) => {
-    // In production, sign with S3 private key
-    // For dev, return localhost URL
     return `http://localhost:5000${filepath}?token=mock_signed_token`;
 };
 
 // 1. Upload Artifact (Draft)
 exports.uploadArtifact = async (req, res) => {
-    const { version, name } = req.body;
+    const { version, name, type } = req.body; // type: 'app' or 'firmware'
     const tenant_id = req.user.tenant_id;
     const file = req.file;
 
@@ -27,14 +19,16 @@ exports.uploadArtifact = async (req, res) => {
     }
 
     try {
-        const binaryPath = storeFile(file);
+        const binaryPath = `/uploads/${file.filename}`;
 
         const result = await pool.query(
-            `INSERT INTO artifacts (tenant_id, name, version, binary_path, status, created_by)
-             VALUES ($1, $2, $3, $4, 'DRAFT', $5)
+            `INSERT INTO artifacts (tenant_id, name, version, type, binary_path, status, created_by)
+             VALUES ($1, $2, $3, $4, $5, 'draft', $6)
              RETURNING *`,
-            [tenant_id, name, version, binaryPath, req.user.id]
+            [tenant_id, name, version, type || 'app', binaryPath, req.user.id]
         );
+
+        await logAudit(tenant_id, req.user.id, "artifact.upload", "ARTIFACT", result.rows[0].id, { name, version });
 
         res.status(201).json({
             success: true,
@@ -47,20 +41,22 @@ exports.uploadArtifact = async (req, res) => {
     }
 };
 
-const { logAudit } = require("../../utils/audit");
-
 // 2. Approve Artifact (Publish)
 exports.approveArtifact = async (req, res) => {
     const { id } = req.params;
 
     try {
-        await pool.query(
-            "UPDATE artifacts SET status = 'PUBLISHED', approved_by = $1, published_at = NOW() WHERE id = $2",
+        const result = await pool.query(
+            "UPDATE artifacts SET status = 'published', approved_by = $1, approved_at = NOW() WHERE id = $2 RETURNING *",
             [req.user.id, id]
         );
 
-        // Audit Log
-        await logAudit("artifact.publish", req.user.id, id, "ARTIFACT", { status: 'PUBLISHED' }, req.ip);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: "Artifact not found" });
+        }
+
+        const artifact = result.rows[0];
+        await logAudit(artifact.tenant_id, req.user.id, "artifact.publish", "ARTIFACT", id, { status: 'published' });
 
         res.json({ success: true, message: "Artifact Published" });
     } catch (error) {
@@ -68,10 +64,10 @@ exports.approveArtifact = async (req, res) => {
     }
 };
 
-// 3. Deploy Artifact (Flow 6)
+// 3. Deploy Artifact
 exports.deployArtifact = async (req, res) => {
     const { id } = req.params;
-    const { deviceIds } = req.body; // Array of device IDs
+    const { deviceIds } = req.body;
 
     if (!deviceIds || !Array.isArray(deviceIds)) {
         return res.status(400).json({ success: false, message: "deviceIds array required" });
@@ -85,25 +81,21 @@ exports.deployArtifact = async (req, res) => {
         }
         const artifact = artRes.rows[0];
 
-        if (artifact.status !== 'PUBLISHED') {
-            return res.status(400).json({ message: "Artifact must be PUBLISHED to deploy" });
+        if (artifact.status !== 'published') {
+            return res.status(400).json({ message: "Artifact must be published to deploy" });
         }
 
         const downloadUrl = gernateMockPresignedUrl(artifact.binary_path);
-
         const results = [];
 
-        // Iterate devices and send commands
         for (const deviceId of deviceIds) {
-            // Insert command log
             const cmdRes = await pool.query(
-                `INSERT INTO commands (device_id, command_type, payload, status)
-                 VALUES ($1, 'install_app', $2, 'QUEUED') RETURNING id`,
-                [deviceId, JSON.stringify({ url: downloadUrl, artifact_id: artifact.id })]
+                `INSERT INTO commands (device_id, type, payload, status, created_by)
+                 VALUES ($1, 'install_app', $2, 'queued', $3) RETURNING id`,
+                [deviceId, { url: downloadUrl, artifact_id: artifact.id }, req.user.id]
             );
             const cmdId = cmdRes.rows[0].id;
 
-            // Push via WS
             const sent = sendCommand(deviceId, {
                 type: "command",
                 id: cmdId,
@@ -113,17 +105,13 @@ exports.deployArtifact = async (req, res) => {
             });
 
             if (sent) {
-                await pool.query("UPDATE commands SET status = 'SENT', sent_at = NOW() WHERE id = $1", [cmdId]);
+                await pool.query("UPDATE commands SET status = 'sent', sent_at = NOW() WHERE id = $1", [cmdId]);
             }
 
-            results.push({ deviceId, cmdId, status: sent ? 'SENT' : 'QUEUED' });
+            results.push({ deviceId, cmdId, status: sent ? 'sent' : 'queued' });
         }
 
-        res.json({
-            success: true,
-            message: "Deployment Commands Sent",
-            results
-        });
+        res.json({ success: true, message: "Deployment Commands Sent", results });
 
     } catch (error) {
         console.error(error);
