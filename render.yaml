@@ -1,7 +1,7 @@
-services:
+﻿services:
   - type: web
     name: tms-backend
-    runtime: node
+    env: node
     plan: free
     buildCommand: npm install
     startCommand: npm start
