@@ -52,7 +52,7 @@ exports.inviteUser = async (req, res) => {
     await sendInviteEmail(email, inviteLink);
 
     // 7. Audit
-    await logAudit(finalTenantId, req.user.id, "user.invite", "USER_INVITATION", "N/A", { role_name, email });
+    await logAudit(finalTenantId, req.user.id, "user.invite", "USER_INVITATION", null, { role_name, email });
 
     res.status(201).json({
       success: true,
