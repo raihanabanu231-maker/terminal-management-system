@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: tms-backend
+    name: tms-backend-atpl-reihana
     env: node
     plan: free
     buildCommand: npm install
