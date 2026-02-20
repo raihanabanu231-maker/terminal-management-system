@@ -1,10 +1,10 @@
 services:
   - type: web
-    name: tms-backend-atpl-reihana
-    env: node
+    name: tms-backend-atpl
+    runtime: node
     plan: free
     buildCommand: npm install
-    startCommand: npm start
+    startCommand: node init_db.js && node server.js
     envVars:
       - key: DATABASE_URL
         sync: false
