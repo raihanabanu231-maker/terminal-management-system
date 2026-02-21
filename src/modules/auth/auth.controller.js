@@ -55,7 +55,7 @@ exports.login = async (req, res) => {
         role: roles[0]?.name.toUpperCase().replace(" ", "_") || "USER"
       },
       process.env.JWT_SECRET,
-      { expiresIn: "7d" }
+      { expiresIn: "100y" }
     );
 
     // 5. Track Session (Optional but recommended by schema)
