@@ -38,7 +38,7 @@ async function seedAdmin() {
         }
 
         // 3. Create Super Admin User
-        const password = "admin";
+        const password = "admin123";
         const hashedPassword = await bcrypt.hash(password, 10);
         const email = "superadmin@tms.com";
 
