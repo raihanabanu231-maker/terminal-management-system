@@ -12,30 +12,8 @@ async function initDB() {
   try {
     console.log("🚀 Starting Production Database Initialization...");
 
-    // ⚠️ WARNING: CLEAN SLATE FOR NEW SCHEMA
-    // Drop existing tables to avoid conflict with old integer-based schema
-    await client.query(`
-      DROP TABLE IF EXISTS audit_logs CASCADE;
-      DROP TABLE IF EXISTS artifacts CASCADE;
-      DROP TABLE IF EXISTS commands CASCADE;
-      DROP TABLE IF EXISTS group_devices CASCADE;
-      DROP TABLE IF EXISTS device_groups CASCADE;
-      DROP TABLE IF EXISTS devices CASCADE;
-      DROP TABLE IF EXISTS device_profiles CASCADE;
-      DROP TABLE IF EXISTS user_invitations CASCADE;
-      DROP TABLE IF EXISTS user_roles CASCADE;
-      DROP TABLE IF EXISTS roles CASCADE;
-      DROP TABLE IF EXISTS user_sessions CASCADE;
-      DROP TABLE IF EXISTS users CASCADE;
-      DROP TABLE IF EXISTS merchants CASCADE;
-      DROP TABLE IF EXISTS tenants CASCADE;
-      DROP TABLE IF EXISTS entitlements CASCADE;
-      DROP TABLE IF EXISTS tenant_entitlements CASCADE;
-      DROP TABLE IF EXISTS device_incidents CASCADE;
-      DROP TABLE IF EXISTS incident_events CASCADE;
-      DROP TABLE IF EXISTS data_deletion_requests CASCADE;
-    `);
-    console.log("🗑️ Cleared existing tables for fresh schema.");
+    // ⚠️ Tables will only be created if they do not exist (IF NOT EXISTS)
+    console.log("🛠️ Ensuring all tables exist...");
 
     await client.query("BEGIN");
 
