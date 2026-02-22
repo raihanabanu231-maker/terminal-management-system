@@ -173,3 +173,46 @@ exports.registerWithInvite = async (req, res) => {
     });
   }
 };
+
+exports.getInviteDetails = async (req, res) => {
+  const { token } = req.params;
+
+  try {
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+    // 1. Fetch Invite and Join with Roles to get the Role Name
+    const result = await pool.query(
+      `SELECT ui.email, ui.first_name, ui.last_name, r.name as role_name
+       FROM user_invitations ui
+       JOIN roles r ON ui.role_id = r.id
+       WHERE ui.token_hash = $1 AND ui.status = 'pending' AND ui.expires_at > NOW()`,
+      [tokenHash]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired invite token"
+      });
+    }
+
+    const invite = result.rows[0];
+
+    res.json({
+      success: true,
+      data: {
+        email: invite.email,
+        first_name: invite.first_name,
+        last_name: invite.last_name,
+        role: invite.role_name
+      }
+    });
+
+  } catch (error) {
+    console.error("GetInviteDetails Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error"
+    });
+  }
+};
