@@ -11,17 +11,20 @@ exports.inviteUser = async (req, res) => {
       return res.status(400).json({ success: false, message: "Email and Role are required" });
     }
 
-    // 1. Get Role ID by Name
-    // We look for tenant-specific role or global role if tenant_id is null
+    // 1. Get Role ID by Name (Case-Insensitive)
     const roleResult = await pool.query(
-      "SELECT id FROM roles WHERE name = $1 AND (tenant_id = $2 OR tenant_id IS NULL) LIMIT 1",
-      [role_name, req.user.tenant_id]
+      "SELECT id, name FROM roles WHERE name ILIKE $1 AND (tenant_id = $2 OR tenant_id IS NULL) LIMIT 1",
+      [role_name.trim(), req.user.tenant_id]
     );
 
     if (roleResult.rows.length === 0) {
-      return res.status(400).json({ success: false, message: "Role not found" });
+      return res.status(400).json({
+        success: false,
+        message: `Role '${role_name}' not found. Available roles: Super Admin, Tenant Admin, Operator.`
+      });
     }
     const roleId = roleResult.rows[0].id;
+    const normalizedRoleName = roleResult.rows[0].name;
 
     // 2. Logic Check (Tenant Admin vs Operator)
     // Simplified logic for now: matching the old requirements
@@ -52,12 +55,12 @@ exports.inviteUser = async (req, res) => {
     await sendInviteEmail(email, inviteLink);
 
     // 7. Audit
-    await logAudit(finalTenantId, req.user.id, "user.invite", "USER_INVITATION", null, { role_name, email });
+    await logAudit(finalTenantId, req.user.id, "user.invite", "USER_INVITATION", null, { role_name: normalizedRoleName, email });
 
     res.status(201).json({
       success: true,
       invite_token: rawToken,
-      message: "Invitation sent successfully"
+      message: `Invitation for ${normalizedRoleName} sent successfully`
     });
 
   } catch (error) {
