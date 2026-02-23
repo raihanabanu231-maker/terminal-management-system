@@ -180,3 +180,16 @@ exports.startStatusJob = () => {
         }
     }, 60000); // Check every minute
 };
+
+// 6. Data Retention Cleanup Job (Week 3 logic)
+// Cleans up telemetry and audit logs older than 30 days
+exports.startCleanupJob = () => {
+    setInterval(async () => {
+        try {
+            await pool.query("DELETE FROM device_telemetry WHERE created_at < NOW() - INTERVAL '30 days'");
+            console.log("🛠️ Data Retention Cleanup completed.");
+        } catch (error) {
+            console.error("Cleanup Job Error:", error);
+        }
+    }, 24 * 60 * 60 * 1000); // Run once every 24 hours
+};

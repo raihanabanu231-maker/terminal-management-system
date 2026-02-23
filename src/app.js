@@ -11,6 +11,7 @@ const tenantRoutes = require("./modules/tenant/tenant.routes");
 const merchantRoutes = require("./modules/merchant/merchant.routes");
 const deviceRoutes = require("./modules/device/device.routes");
 const artifactRoutes = require("./modules/artifact/artifact.routes");
+const dashboardRoutes = require("./modules/dashboard/dashboard.routes");
 
 const app = express();
 
@@ -30,6 +31,7 @@ app.use("/api/tenants", tenantRoutes);
 app.use("/api/merchants", merchantRoutes);
 app.use("/api/devices", deviceRoutes);
 app.use("/api/artifacts", artifactRoutes);
+app.use("/api/dashboard", dashboardRoutes);
 
 // Default test route
 app.get("/", (req, res) => {

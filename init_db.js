@@ -274,7 +274,21 @@ async function initDB() {
       );
     `);
 
-    // 18. Audit Logs
+    // 18. Device Telemetry
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS device_telemetry (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        cpu_usage NUMERIC,
+        ram_usage NUMERIC,
+        battery_level NUMERIC,
+        storage_usage NUMERIC,
+        custom_data JSONB NOT NULL DEFAULT '{}',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    // 19. Audit Logs
     await client.query(`
       CREATE TABLE IF NOT EXISTS audit_logs (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
