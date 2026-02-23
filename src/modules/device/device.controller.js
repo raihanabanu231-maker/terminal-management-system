@@ -138,3 +138,45 @@ exports.sendDeviceCommand = async (req, res) => {
         res.status(500).json({ message: "Server error" });
     }
 };
+// 4. Device Command Polling (The "Pull" fallback for Week 2)
+exports.getPendingCommands = async (req, res) => {
+    const deviceId = req.user.id; // User is the DEVICE itself in this context
+
+    try {
+        const result = await pool.query(
+            "SELECT id, type, payload FROM commands WHERE device_id = $1 AND status = 'queued' ORDER BY created_at ASC",
+            [deviceId]
+        );
+
+        // Update status to 'sent' once pulled
+        if (result.rows.length > 0) {
+            const ids = result.rows.map(r => r.id);
+            await pool.query(
+                "UPDATE commands SET status = 'sent', sent_at = NOW() WHERE id = ANY($1)",
+                [ids]
+            );
+        }
+
+        res.json({
+            success: true,
+            commands: result.rows
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+// 5. Status Normalization Job (Week 2 logic)
+// This runs in the background and marks devices as OFFLINE if silent for > 5 mins
+exports.startStatusJob = () => {
+    setInterval(async () => {
+        try {
+            await pool.query(
+                "UPDATE devices SET status = 'offline' WHERE last_seen < NOW() - INTERVAL '5 minutes' AND status = 'active'"
+            );
+        } catch (error) {
+            console.error("Status Job Error:", error);
+        }
+    }, 60000); // Check every minute
+};

@@ -46,23 +46,18 @@ async function initDB() {
       );
     `);
 
-    // Merchant Path Trigger Function
+    // Merchant Path Trigger Function (Week 1 Core Logic)
     await client.query(`
       CREATE OR REPLACE FUNCTION update_merchant_path()
       RETURNS TRIGGER AS $$
-      DECLARE
-        parent_rec RECORD;
       BEGIN
         IF NEW.parent_id IS NULL THEN
-          NEW.path = '/' || NEW.id::TEXT;
+          NEW.path = NEW.id::TEXT;
           NEW.level = 0;
         ELSE
-          SELECT path, level INTO parent_rec FROM merchants WHERE id = NEW.parent_id;
-          IF NOT FOUND THEN
-            RAISE EXCEPTION 'Parent merchant not found';
-          END IF;
-          NEW.path = parent_rec.path || '/' || NEW.id::TEXT;
-          NEW.level = parent_rec.level + 1;
+          SELECT path || '/' || NEW.id::TEXT, level + 1 
+          INTO NEW.path, NEW.level 
+          FROM merchants WHERE id = NEW.parent_id;
         END IF;
         RETURN NEW;
       END;
