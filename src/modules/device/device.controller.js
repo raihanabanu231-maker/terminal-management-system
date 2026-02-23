@@ -167,7 +167,47 @@ exports.getPendingCommands = async (req, res) => {
     }
 };
 
-// 5. Status Normalization Job (Week 2 logic)
+// 5. Get All Devices (For Dashboard/List)
+exports.getDevices = async (req, res) => {
+    const { merchant_id, tenant_id } = req.query;
+    const userRole = req.user.role;
+
+    try {
+        let query = "SELECT d.*, m.name as merchant_name, t.name as tenant_name FROM devices d ";
+        query += "JOIN tenants t ON d.tenant_id = t.id ";
+        query += "LEFT JOIN merchants m ON d.merchant_id = m.id ";
+        query += "WHERE d.deleted_at IS NULL";
+
+        const params = [];
+
+        // If NOT Super Admin, restrict to their own tenant
+        if (userRole !== "SUPER_ADMIN") {
+            params.push(req.user.tenant_id);
+            query += ` AND d.tenant_id = $${params.length}`;
+        } else if (tenant_id) {
+            // Super Admin can filter by a specific tenant if they want
+            params.push(tenant_id);
+            query += ` AND d.tenant_id = $${params.length}`;
+        }
+
+        if (merchant_id) {
+            params.push(merchant_id);
+            query += ` AND d.merchant_id = $${params.length}`;
+        }
+
+        const result = await pool.query(query, params);
+        res.json({
+            success: true,
+            total: result.rows.length,
+            data: result.rows
+        });
+    } catch (error) {
+        console.error("GetDevices Error:", error);
+        res.status(500).json({ message: "Server error", detail: error.message });
+    }
+};
+
+// 6. Status Normalization Job (Week 2 logic)
 // This runs in the background and marks devices as OFFLINE if silent for > 5 mins
 exports.startStatusJob = () => {
     setInterval(async () => {

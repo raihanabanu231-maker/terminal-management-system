@@ -2,18 +2,21 @@ const express = require("express");
 const router = express.Router();
 const { createMerchant, getMerchants } = require("./merchant.controller");
 const { verifyToken } = require("../../middleware/auth.middleware");
+const { authorizeRoles } = require("../../middleware/role.middleware");
 
-// Create Merchant (Restricted to Tenant Admin)
+// Create Merchant (Restricted to Super Admin)
 router.post(
     "/",
     verifyToken,
+    authorizeRoles("SUPER_ADMIN"),
     createMerchant
 );
 
-// Get All Merchants
+// Get All Merchants (Restricted to Super Admin)
 router.get(
     "/",
     verifyToken,
+    authorizeRoles("SUPER_ADMIN"),
     getMerchants
 );
 

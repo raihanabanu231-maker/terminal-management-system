@@ -27,9 +27,10 @@ exports.sendInviteEmail = async (toEmail, inviteLink) => {
     console.log("Email sent via Brevo:", result);
 
   } catch (error) {
-    console.warn("⚠️ Failed to send email via Brevo (Check API Key). Falling back to console log.");
-    console.log(`\n📨 MOCK EMAIL TO: ${toEmail}`);
-    console.log(`🔗 LINK: ${inviteLink}\n`);
-    // Do not throw error so the flow continues
+    const errorDetail = error.response ? error.response.body : error.message;
+    console.error("❌ BREVO ERROR:", errorDetail);
+
+    // Throw error so the controller catch block handles it
+    throw new Error(`Email delivery failed: ${JSON.stringify(errorDetail)}`);
   }
 };

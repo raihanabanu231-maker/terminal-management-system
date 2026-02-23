@@ -15,10 +15,28 @@ exports.createTenant = async (req, res) => {
     });
 
   } catch (error) {
-    console.error(error);
+    console.error("CreateTenant ERROR:", error);
     res.status(500).json({
       success: false,
-      message: "Server error"
+      message: "Server error",
+      detail: error.message
+    });
+  }
+};
+
+exports.getTenants = async (req, res) => {
+  try {
+    const result = await pool.query("SELECT * FROM tenants ORDER BY created_at DESC");
+    res.json({
+      success: true,
+      data: result.rows
+    });
+  } catch (error) {
+    console.error("GetTenants ERROR:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      detail: error.message
     });
   }
 };

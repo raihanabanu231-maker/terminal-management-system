@@ -4,7 +4,8 @@ const {
     generateEnrollmentToken,
     enrollDevice,
     sendDeviceCommand,
-    getPendingCommands
+    getPendingCommands,
+    getDevices
 } = require("./device.controller");
 const {
     reportIncident,
@@ -12,11 +13,21 @@ const {
     getIncidents
 } = require("./incident.controller");
 const { verifyToken } = require("../../middleware/auth.middleware");
+const { authorizeRoles } = require("../../middleware/role.middleware");
 
-// Generate Token (Protected: Only Admins/Operators can do this)
+// Get All Devices (Protected: Super Admin Only)
+router.get(
+    "/",
+    verifyToken,
+    authorizeRoles("SUPER_ADMIN"),
+    getDevices
+);
+
+// Generate Token (Protected: Only Super Admin can do this for testing)
 router.post(
     "/enroll-token",
     verifyToken,
+    authorizeRoles("SUPER_ADMIN"),
     generateEnrollmentToken
 );
 
@@ -26,10 +37,11 @@ router.post(
     enrollDevice
 );
 
-// Remote Command (Protected)
+// Remote Command (Protected: Super Admin Only)
 router.post(
     "/:deviceId/command",
     verifyToken,
+    authorizeRoles("SUPER_ADMIN"),
     sendDeviceCommand
 );
 
@@ -42,7 +54,7 @@ router.get(
 
 // 🚨 Incidents & Telemetry (Week 3)
 router.post("/incidents", verifyToken, reportIncident);
-router.get("/incidents", verifyToken, getIncidents);
+router.get("/incidents", verifyToken, authorizeRoles("SUPER_ADMIN"), getIncidents);
 router.post("/telemetry", verifyToken, reportTelemetry);
 
 module.exports = router;
