@@ -13,25 +13,37 @@ const deviceRoutes = require("./modules/device/device.routes");
 const artifactRoutes = require("./modules/artifact/artifact.routes");
 const dashboardRoutes = require("./modules/dashboard/dashboard.routes");
 
+const rateLimit = require("express-rate-limit");
+
 const app = express();
 
-// Middleware
+// Security & Performance Middleware
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
-// Serve Static Uploads (For Flow 6: Mock MinIO)
+// 🛡️ Global Rate Limiter (Week 4)
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per window
+  message: { message: "Too many requests, please try again later." }
+});
+app.use("/api/", limiter);
+
+// Serve Static Uploads
 const path = require("path");
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
-// Routes
-app.use("/api/auth", authRoutes);
-app.use("/api/users", userRoutes);
-app.use("/api/tenants", tenantRoutes);
-app.use("/api/merchants", merchantRoutes);
-app.use("/api/devices", deviceRoutes);
-app.use("/api/artifacts", artifactRoutes);
-app.use("/api/dashboard", dashboardRoutes);
+// 🚦 API Versioning (/api/v1)
+const API_V1 = "/api/v1";
+
+app.use(`${API_V1}/auth`, authRoutes);
+app.use(`${API_V1}/users`, userRoutes);
+app.use(`${API_V1}/tenants`, tenantRoutes);
+app.use(`${API_V1}/merchants`, merchantRoutes);
+app.use(`${API_V1}/devices`, deviceRoutes);
+app.use(`${API_V1}/artifacts`, artifactRoutes);
+app.use(`${API_V1}/dashboard`, dashboardRoutes);
 
 // Default test route
 app.get("/", (req, res) => {

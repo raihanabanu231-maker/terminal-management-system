@@ -321,6 +321,9 @@ async function initDB() {
       CREATE INDEX IF NOT EXISTS idx_devices_serial ON devices(serial);
       CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
       CREATE INDEX IF NOT EXISTS idx_audit_logs_resource ON audit_logs(resource_type, resource_id);
+      CREATE INDEX IF NOT EXISTS idx_commands_device_id ON commands(device_id, status);
+      CREATE INDEX IF NOT EXISTS idx_telemetry_device_id ON device_telemetry(device_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_incidents_tenant_id ON device_incidents(tenant_id, status);
     `);
 
     // Seed Initial Roles (System Level)
