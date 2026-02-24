@@ -37,20 +37,30 @@ exports.getMerchants = async (req, res) => {
         let query = "SELECT m.*, t.name as tenant_name FROM merchants m JOIN tenants t ON m.tenant_id = t.id";
         const params = [];
 
-        // If NOT Super Admin, restrict to their own tenant
-        if (userRole !== "SUPER_ADMIN") {
+        // Hierarchy Filtering Logic
+        if (userRole === "SUPER_ADMIN") {
+            if (tenant_id) {
+                params.push(tenant_id);
+                query += ` WHERE m.tenant_id = $${params.length}`;
+            }
+        } else {
+            // All non-super-admins are locked to their tenant
             params.push(req.user.tenant_id);
             query += ` WHERE m.tenant_id = $${params.length}`;
-        } else if (tenant_id) {
-            // Super Admin can filter by a specific tenant
-            params.push(tenant_id);
-            query += ` WHERE m.tenant_id = $${params.length}`;
+
+            // 🎯 NEW: Merchant Scoping
+            // Check if user has a merchant scope in their JWT
+            const merchantRole = req.user.roles?.find(r => r.scope === 'merchant');
+            if (merchantRole) {
+                params.push(merchantRole.scope_id);
+                query += ` AND m.path LIKE (SELECT path FROM merchants WHERE id = $${params.length}) || '%'`;
+            }
         }
 
         query += " ORDER BY m.path ASC";
 
         const result = await pool.query(query, params);
-        res.json({ success: true, data: result.rows });
+        res.json({ success: true, count: result.rows.length, data: result.rows });
     } catch (error) {
         console.error("GetMerchants ERROR:", error);
         res.status(500).json({ message: "Server error", detail: error.message });
