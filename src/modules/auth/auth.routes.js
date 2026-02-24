@@ -7,7 +7,7 @@ const { login, registerWithInvite, getInviteDetails } = require("./auth.controll
 router.post("/login", login);
 
 // 📨 Register via invite route
-router.post("/register", registerWithInvite);
+router.post("/register-invite", registerWithInvite);
 
 // 🔍 Validate invite and get info (For pre-filling frontend form)
 router.get("/invite/:token", getInviteDetails);
