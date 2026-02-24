@@ -180,11 +180,12 @@ exports.getInviteDetails = async (req, res) => {
   try {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
 
-    // 1. Fetch Invite and Join with Roles to get the Role Name
+    // 1. Fetch Invite and Join with Roles and Tenants to get the details
     const result = await pool.query(
-      `SELECT ui.email, ui.first_name, ui.last_name, r.name as role_name
+      `SELECT ui.email, r.name as role_name, t.name as company_name
        FROM user_invitations ui
        JOIN roles r ON ui.role_id = r.id
+       JOIN tenants t ON ui.tenant_id = t.id
        WHERE ui.token_hash = $1 AND ui.status = 'pending' AND ui.expires_at > NOW()`,
       [tokenHash]
     );
@@ -202,8 +203,7 @@ exports.getInviteDetails = async (req, res) => {
       success: true,
       data: {
         email: invite.email,
-        first_name: invite.first_name,
-        last_name: invite.last_name,
+        company_name: invite.company_name,
         role: invite.role_name
       }
     });
