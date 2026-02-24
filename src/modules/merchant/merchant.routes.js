@@ -12,11 +12,11 @@ router.post(
     createMerchant
 );
 
-// Get All Merchants (Restricted to Super Admin)
+// Get All Merchants (Restricted to Super Admin & Tenant Admin)
 router.get(
     "/",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN"),
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN"),
     getMerchants
 );
 

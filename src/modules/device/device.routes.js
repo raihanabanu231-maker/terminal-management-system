@@ -15,11 +15,11 @@ const {
 const { verifyToken } = require("../../middleware/auth.middleware");
 const { authorizeRoles } = require("../../middleware/role.middleware");
 
-// Get All Devices (Protected: Super Admin Only)
+// Get All Devices (Protected: Super Admin & Tenant Admin)
 router.get(
     "/",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN"),
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN"),
     getDevices
 );
 
