@@ -10,6 +10,6 @@ router.post("/login", login);
 router.post("/register-invite", registerWithInvite);
 
 // 🔍 Validate invite and get info (For pre-filling frontend form)
-router.get("/invite/:token", getInviteDetails);
+router.get("/invite", getInviteDetails);
 
 module.exports = router;

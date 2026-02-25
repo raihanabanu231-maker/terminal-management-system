@@ -59,12 +59,19 @@ exports.inviteUser = async (req, res) => {
       [finalTenantId, merchant_id || null, email, roleId, scopeType, scopeId, tokenHash, expiresAt, req.user.id]
     );
 
-    // 5. Send Email
+    // 5. Fetch Company Name for Email Personalization
+    const tenantResult = await pool.query("SELECT name FROM tenants WHERE id = $1", [finalTenantId]);
+    const companyName = tenantResult.rows[0]?.name || "Our Company";
+
+    // 6. Send Professional Email
     const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
     const inviteLink = `${frontendUrl}/register?token=${rawToken}`;
-    await sendInviteEmail(email, inviteLink);
+    await sendInviteEmail(email, inviteLink, {
+      roleName: normalizedRoleName,
+      companyName: companyName
+    });
 
-    // 6. Audit
+    // 7. Audit
     await logAudit(finalTenantId, req.user.id, "user.invite", "USER_INVITATION", null, { role_name: normalizedRoleName, email });
 
     res.status(201).json({

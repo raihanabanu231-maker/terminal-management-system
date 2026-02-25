@@ -33,9 +33,9 @@ When a user logs in (e.g., `superadmin@tms.com`):
 ### ✉️ Step 4: Invitation & Registration
 Users don't just "Sign Up"; they are **Invited**.
 1.  **Invite (`user.controller.js`)**: An admin sends an email. The code creates a random `token` and stores its **SHA256 hash** in `user_invitations`.
+    - **Hierarchical Scoping**: Admins can pick a specific **Merchant (Store)**. If they do, the `scope_id` and `scope_type ('merchant')` are saved in the invitation record.
 2.  **Registration (`auth.controller.js`)**: The user clicks the link. They submit the token + password.
-    *   The code hashes the token again to find the match (Secure!).
-    *   It creates the `user` and assigns them the **Role** from the invitation.
+    - **Isolation**: The code hashes the token again to find the match. It creates the `user` and assigns them the **Scoped Role**. This ensures they can only see the store they were assigned to using **Path-based filtering** in the database.
 
 ---
 
