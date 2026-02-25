@@ -70,6 +70,10 @@ exports.inviteUser = async (req, res) => {
     // 🎯 Constructing the link safely without double-slashes
     const inviteLink = `${frontendUrl}/#/register?token=${rawToken}`;
 
+    console.log(`📧 NEW INVITATION CREATED:`);
+    console.log(`   - To: ${email}`);
+    console.log(`   - Link: ${inviteLink}`);
+
     await sendInviteEmail(email, inviteLink, {
       roleName: normalizedRoleName,
       companyName: companyName
