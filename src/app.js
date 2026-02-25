@@ -17,6 +17,9 @@ const rateLimit = require("express-rate-limit");
 
 const app = express();
 
+// 🚀 Essential for Render's proxy to work with Rate Limiting
+app.set("trust proxy", 1);
+
 // Security & Performance Middleware
 app.use(helmet());
 app.use(cors());
