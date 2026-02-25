@@ -67,8 +67,8 @@ exports.inviteUser = async (req, res) => {
 
     // 6. Send Professional Email
     const frontendUrl = (process.env.FRONTEND_URL || "https://atpl-tms-frontend.onrender.com").replace(/\/$/, "");
-    // 🎯 Constructing the link safely without double-slashes
-    const inviteLink = `${frontendUrl}/#/register?token=${rawToken}`;
+    // 🎯 Constructing the link for History Mode (Confirmed working previously)
+    const inviteLink = `${frontendUrl}/register?token=${rawToken}`;
 
     console.log(`📧 NEW INVITATION CREATED:`);
     console.log(`   - To: ${email}`);
