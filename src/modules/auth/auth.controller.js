@@ -175,10 +175,18 @@ exports.registerWithInvite = async (req, res) => {
 };
 
 exports.getInviteDetails = async (req, res) => {
-  const { token } = req.body; // ✅ Use body: { "token": "..." }
+  const token = req.body.token || req.query.token; // ✅ Support both formats for safety
+
+  console.log("🔍 Handshake Request Received. Token Length:", token?.length);
 
   try {
+    if (!token) {
+      console.error("❌ Handshake Error: No token provided in body or query");
+      return res.status(400).json({ success: false, message: "Invitation token is missing" });
+    }
+
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    console.log("🔍 Searching for Hash:", tokenHash);
 
     // 1. Fetch Invite and Join with Roles and Tenants to get the details
     const result = await pool.query(
