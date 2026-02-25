@@ -65,8 +65,15 @@ exports.inviteUser = async (req, res) => {
 
     // 6. Send Professional Email
     const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
-    const inviteLink = `${frontendUrl}/register?token=${rawToken}`;
-    await sendInviteEmail(email, inviteLink, {
+    // Check if URL contains a # (hash) and append token correctly
+    const inviteLink = frontendUrl.includes('#')
+      ? `${frontendUrl}/register?token=${rawToken}`
+      : `${frontendUrl}/register?token=${rawToken}`;
+
+    // Actually, yours has a # at the end. Let's make it flexible:
+    const finalLink = frontendUrl.endsWith('/') ? `${frontendUrl}register?token=${rawToken}` : `${frontendUrl}/register?token=${rawToken}`;
+
+    await sendInviteEmail(email, finalLink, {
       roleName: normalizedRoleName,
       companyName: companyName
     });
