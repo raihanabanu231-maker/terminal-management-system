@@ -68,7 +68,7 @@ exports.inviteUser = async (req, res) => {
     // 6. Send Professional Email
     const frontendUrl = process.env.FRONTEND_URL || "https://atpl-tms-frontend.onrender.com";
     // 🎯 Constructing the link for modern History Mode routing
-    const inviteLink = `${frontendUrl.replace(/\/$/, "")}/register?token=${rawToken}`;
+    const inviteLink = `${frontendUrl.replace(/\/$/, "")}/#/register?token=${rawToken}`;
 
     await sendInviteEmail(email, inviteLink, {
       roleName: normalizedRoleName,
