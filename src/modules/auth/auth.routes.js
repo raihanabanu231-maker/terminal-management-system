@@ -13,4 +13,12 @@ router.post("/register-invite", registerWithInvite);
 router.get("/invite", getInviteDetails);
 router.post("/invite", getInviteDetails);
 
+// 🧪 Debug Hashing (Temporary)
+router.post("/test-token", (req, res) => {
+    const { token } = req.body;
+    const crypto = require("crypto");
+    const hash = crypto.createHash('sha256').update(token).digest('hex');
+    res.json({ token, hash });
+});
+
 module.exports = router;
