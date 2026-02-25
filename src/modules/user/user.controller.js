@@ -51,6 +51,8 @@ exports.inviteUser = async (req, res) => {
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
     const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000);
 
+    console.log(`📦 INVITE CREATED: Token=[${rawToken}] Hash=[${tokenHash}]`);
+
     // 4. Insert Invitation
     await pool.query(
       `INSERT INTO user_invitations 

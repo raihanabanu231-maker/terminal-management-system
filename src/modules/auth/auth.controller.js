@@ -175,9 +175,14 @@ exports.registerWithInvite = async (req, res) => {
 };
 
 exports.getInviteDetails = async (req, res) => {
-  const token = req.body.token || req.query.token; // ✅ Support both formats for safety
+  let token = req.body.token || req.query.token;
 
-  console.log("🔍 Handshake Request Received. Token Length:", token?.length);
+  if (token) {
+    token = token.trim();
+    console.log(`🔍 Handshake Received. Token: [${token}] (Length: ${token.length})`);
+  } else {
+    console.log("🔍 Handshake Received. No token found.");
+  }
 
   try {
     if (!token) {
