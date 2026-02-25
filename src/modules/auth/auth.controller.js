@@ -175,7 +175,7 @@ exports.registerWithInvite = async (req, res) => {
 };
 
 exports.getInviteDetails = async (req, res) => {
-  const { token } = req.query; // ✅ Use query params: ?token=...
+  const { token } = req.body; // ✅ Use body: { "token": "..." }
 
   try {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
