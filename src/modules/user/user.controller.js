@@ -64,7 +64,7 @@ exports.inviteUser = async (req, res) => {
     const companyName = tenantResult.rows[0]?.name || "Our Company";
 
     // 6. Send Professional Email
-    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:55716";
     // 🎯 Constructing the link specifically for your Vue hash routing
     const inviteLink = `${frontendUrl}/#/register?token=${rawToken}`;
 
