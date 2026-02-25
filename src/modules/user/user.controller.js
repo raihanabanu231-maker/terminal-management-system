@@ -66,8 +66,8 @@ exports.inviteUser = async (req, res) => {
     const companyName = tenantResult.rows[0]?.name || "Our Company";
 
     // 6. Send Professional Email
-    const frontendUrl = process.env.FRONTEND_URL || "https://atpl-tms-frontend.onrender.com";
-    // 🎯 Constructing the link for modern History Mode routing
+    const frontendUrl = (process.env.FRONTEND_URL || "https://atpl-tms-frontend.onrender.com").replace(/\/$/, "");
+    // 🎯 Constructing the link safely without double-slashes
     const inviteLink = `${frontendUrl}/#/register?token=${rawToken}`;
 
     await sendInviteEmail(email, inviteLink, {
