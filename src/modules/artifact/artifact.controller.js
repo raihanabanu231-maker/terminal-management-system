@@ -11,7 +11,13 @@ const gernateMockPresignedUrl = (filepath) => {
 // 1. Upload Artifact (Draft)
 exports.uploadArtifact = async (req, res) => {
     const { version, name, type } = req.body; // type: 'app' or 'firmware'
-    const tenant_id = req.user.tenant_id;
+    const tenant_id = (req.user.role === "SUPER_ADMIN" && req.body.tenant_id)
+        ? req.body.tenant_id
+        : req.user.tenant_id;
+
+    if (!tenant_id) {
+        return res.status(400).json({ success: false, message: "tenant_id is required" });
+    }
     const file = req.file;
 
     if (!file) {

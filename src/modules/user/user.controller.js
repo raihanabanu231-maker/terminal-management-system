@@ -61,7 +61,12 @@ exports.inviteUser = async (req, res) => {
     const normalizedRoleName = roleResult.rows[0].name;
 
     // 2. Setup Logic
-    const finalTenantId = tenant_id || req.user.tenant_id;
+    const finalTenantId = (req.user.role === "SUPER_ADMIN" && tenant_id) ? tenant_id : req.user.tenant_id;
+
+    if (!finalTenantId && req.user.role !== 'SUPER_ADMIN') {
+      return res.status(400).json({ success: false, message: "tenant_id is required" });
+    }
+
     const scopeType = merchant_id ? 'merchant' : 'tenant';
     const scopeId = merchant_id || finalTenantId;
 
@@ -126,6 +131,9 @@ exports.getInvitations = async (req, res) => {
 
     if (req.user.role !== "SUPER_ADMIN") {
       params.push(req.user.tenant_id);
+      query += ` WHERE ui.tenant_id = $1`;
+    } else if (req.query.tenant_id) {
+      params.push(req.query.tenant_id);
       query += ` WHERE ui.tenant_id = $1`;
     }
 

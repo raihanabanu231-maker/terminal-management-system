@@ -1,9 +1,25 @@
 const pool = require("../../config/db");
 
 exports.getQuickMetrics = async (req, res) => {
-    const { tenant_id } = req.user;
+    const userRole = req.user.role;
+    const { tenant_id: queryTenantId } = req.query;
+    const finalTenantId = (userRole === "SUPER_ADMIN" && queryTenantId)
+        ? queryTenantId
+        : req.user.tenant_id;
 
     try {
+        let deviceConstraint = "";
+        let incidentConstraint = "";
+        let commandConstraint = "";
+        const params = [];
+
+        if (userRole !== "SUPER_ADMIN" || finalTenantId) {
+            params.push(finalTenantId);
+            deviceConstraint = " AND d.tenant_id = $1";
+            incidentConstraint = " WHERE tenant_id = $1";
+            commandConstraint = " WHERE d.tenant_id = $1";
+        }
+
         // Run multiple queries in parallel for efficiency
         const [devices, openIncidents, pendingCommands] = await Promise.all([
             // Device counts (Total vs Online)
@@ -11,20 +27,20 @@ exports.getQuickMetrics = async (req, res) => {
                 `SELECT 
                     COUNT(*) as total,
                     COUNT(*) FILTER (WHERE status = 'active' AND last_seen > NOW() - INTERVAL '5 minutes') as online
-                 FROM devices WHERE tenant_id = $1 AND deleted_at IS NULL`,
-                [tenant_id]
+                 FROM devices d WHERE d.deleted_at IS NULL ${deviceConstraint}`,
+                params
             ),
             // Open incidents
             pool.query(
-                "SELECT COUNT(*) FROM device_incidents WHERE tenant_id = $1 AND status = 'open'",
-                [tenant_id]
+                `SELECT COUNT(*) FROM device_incidents ${incidentConstraint} ${incidentConstraint ? 'AND' : 'WHERE'} status = 'open'`,
+                params
             ),
             // Pending commands
             pool.query(
                 `SELECT COUNT(*) FROM commands c
                  JOIN devices d ON c.device_id = d.id
-                 WHERE d.tenant_id = $1 AND c.status = 'queued'`,
-                [tenant_id]
+                 ${commandConstraint} ${commandConstraint ? 'AND' : 'WHERE'} c.status = 'queued'`,
+                params
             )
         ]);
 

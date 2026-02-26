@@ -5,8 +5,13 @@ const { logAudit } = require("../../utils/audit");
 
 // 1. Generate Enrollment Token
 exports.generateEnrollmentToken = async (req, res) => {
-    const { serial, merchant_id, model } = req.body;
-    const tenant_id = req.user.tenant_id;
+    const tenant_id = (req.user.role === "SUPER_ADMIN" && req.body.tenant_id)
+        ? req.body.tenant_id
+        : req.user.tenant_id;
+
+    if (!tenant_id) {
+        return res.status(400).json({ success: false, message: "tenant_id is required" });
+    }
 
     try {
         const token = crypto.randomBytes(32).toString("hex");
@@ -98,14 +103,21 @@ exports.sendDeviceCommand = async (req, res) => {
     const tenant_id = req.user.tenant_id;
 
     try {
-        const deviceRes = await pool.query(
-            "SELECT id, tenant_id FROM devices WHERE id = $1 AND tenant_id = $2",
-            [deviceId, tenant_id]
-        );
+        let sql = "SELECT id, tenant_id FROM devices WHERE id = $1";
+        const params = [deviceId];
+
+        if (req.user.role !== "SUPER_ADMIN") {
+            sql += " AND tenant_id = $2";
+            params.push(req.user.tenant_id);
+        }
+
+        const deviceRes = await pool.query(sql, params);
 
         if (deviceRes.rows.length === 0) {
             return res.status(404).json({ success: false, message: "Device not found" });
         }
+
+        const device = deviceRes.rows[0];
 
         const cmdRes = await pool.query(
             `INSERT INTO commands (device_id, type, payload, status, created_by)
@@ -116,7 +128,7 @@ exports.sendDeviceCommand = async (req, res) => {
 
         const commandId = cmdRes.rows[0].id;
 
-        await logAudit(tenant_id, req.user.id, "command.send", "DEVICE", deviceId, { type, command_id: commandId });
+        await logAudit(device.tenant_id, req.user.id, "command.send", "DEVICE", deviceId, { type, command_id: commandId });
 
         const { sendCommand } = require("../../gateway/socket.gateway");
         const success = sendCommand(deviceId, {

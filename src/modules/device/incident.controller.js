@@ -65,17 +65,31 @@ exports.reportTelemetry = async (req, res) => {
 // 3. Get Incidents (For Dashboard)
 exports.getIncidents = async (req, res) => {
     const { tenant_id } = req.user;
+    const userRole = req.user.role;
 
     try {
-        const result = await pool.query(
-            `SELECT i.*, d.serial, d.model 
+        let query = `
+             SELECT i.*, d.serial, d.model 
              FROM device_incidents i
              JOIN devices d ON i.device_id = d.id
-             WHERE i.tenant_id = $1
-             ORDER BY i.created_at DESC LIMIT 50`,
-            [tenant_id]
-        );
+        `;
+        const params = [];
 
+        if (userRole === "SUPER_ADMIN") {
+            // Super Admin optionally filters by tenant_id from query if provided
+            if (req.query.tenant_id) {
+                params.push(req.query.tenant_id);
+                query += " WHERE i.tenant_id = $1";
+            }
+        } else {
+            // Regular users are locked to their tenant
+            params.push(tenant_id);
+            query += " WHERE i.tenant_id = $1";
+        }
+
+        query += " ORDER BY i.created_at DESC LIMIT 50";
+
+        const result = await pool.query(query, params);
         res.json({ success: true, data: result.rows });
     } catch (error) {
         console.error("Get Incidents Error:", error);
