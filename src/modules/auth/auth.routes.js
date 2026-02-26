@@ -1,10 +1,16 @@
 const express = require("express");
 const router = express.Router();
 
-const { login, registerWithInvite, getInviteDetails } = require("./auth.controller");
+const { login, registerWithInvite, getInviteDetails, refresh, logout } = require("./auth.controller");
 
 // 🔐 Login route
 router.post("/login", login);
+
+// 🔄 Refresh Token route
+router.post("/refresh", refresh);
+
+// 🚪 Logout route
+router.post("/logout", logout);
 
 // 📨 Register via invite route
 router.post("/register-invite", registerWithInvite);
