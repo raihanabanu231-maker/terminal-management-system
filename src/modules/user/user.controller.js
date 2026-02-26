@@ -11,6 +11,23 @@ exports.inviteUser = async (req, res) => {
       return res.status(400).json({ success: false, message: "Email and Role are required" });
     }
 
+    // --- DUPLICATE PREVENTION LOGIC ---
+    // A. Check if user already exists
+    const userExists = await pool.query("SELECT id FROM users WHERE email = $1", [email]);
+    if (userExists.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "This email is already registered in the system. They do not need an invitation."
+      });
+    }
+
+    // B. Check for existing pending invites and remove them to keep only the newest one valid
+    await pool.query(
+      "DELETE FROM user_invitations WHERE email = $1 AND status = 'pending'",
+      [email]
+    );
+    // ----------------------------------
+
     // 1. Get Role ID by Name (Case-Insensitive)
     // Super Admin can see roles globally, others are restricted to their tenant
     let roleQuery = "SELECT id, name FROM roles WHERE name ILIKE $1 AND (tenant_id IS NULL";
