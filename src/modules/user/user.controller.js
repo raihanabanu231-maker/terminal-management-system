@@ -4,10 +4,12 @@ const { sendInviteEmail } = require("../../utils/email");
 const { logAudit } = require("../../utils/audit");
 
 exports.inviteUser = async (req, res) => {
+  console.log("📥 Invite Request Body:", req.body);
   const { first_name, last_name, email, role_name, tenant_id, merchant_id } = req.body;
 
   try {
     if (!email || !role_name) {
+      console.log("❌ Validation Failed: email or role_name missing in body");
       return res.status(400).json({ success: false, message: "Email and Role are required" });
     }
 
