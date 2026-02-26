@@ -13,6 +13,7 @@ const server = http.createServer(app);
 
 // 5. Initialize WebSockets and Background Jobs
 try {
+  console.log(`🌍 Platform Info: Node ${process.version} on ${process.platform}`);
   initWebSocketServer(server);
   startStatusJob();
   startCleanupJob();
