@@ -12,9 +12,14 @@ const PORT = process.env.PORT || 5000;
 const server = http.createServer(app);
 
 // 5. Initialize WebSockets and Background Jobs
-initWebSocketServer(server);
-startStatusJob(); // Starts the Week 2 Status Normalization Job
-startCleanupJob(); // Starts the Week 3 Data Retention Job
+try {
+  initWebSocketServer(server);
+  startStatusJob();
+  startCleanupJob();
+  console.log("🚀 Startup: WebSocket and Jobs Initialized");
+} catch (startupError) {
+  console.error("⚠️ Startup Warning: Background jobs failed to start:", startupError);
+}
 
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
