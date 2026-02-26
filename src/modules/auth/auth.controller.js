@@ -207,7 +207,7 @@ exports.logout = async (req, res) => {
 };
 
 exports.registerWithInvite = async (req, res) => {
-  const { token, password, first_name, last_name } = req.body;
+  const { token, password, first_name, last_name, mobile } = req.body;
 
   try {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
@@ -243,15 +243,15 @@ exports.registerWithInvite = async (req, res) => {
       if (existing.rows.length > 0) {
         userId = existing.rows[0].id;
         await client.query(
-          "UPDATE users SET password_hash = $1, first_name = $2, last_name = $3, status = 'active', invited = false WHERE id = $4",
-          [hashedPassword, first_name, last_name, userId]
+          "UPDATE users SET password_hash = $1, first_name = $2, last_name = $3, mobile = $4, status = 'active', invited = false WHERE id = $5",
+          [hashedPassword, first_name, last_name, mobile || null, userId]
         );
       } else {
         const userRes = await client.query(
-          `INSERT INTO users (tenant_id, email, password_hash, first_name, last_name, status, invited)
-             VALUES ($1, $2, $3, $4, $5, 'active', false)
+          `INSERT INTO users (tenant_id, email, password_hash, first_name, last_name, mobile, status, invited)
+             VALUES ($1, $2, $3, $4, $5, $6, 'active', false)
              RETURNING id`,
-          [invite.tenant_id, invite.email, hashedPassword, first_name, last_name]
+          [invite.tenant_id, invite.email, hashedPassword, first_name, last_name, mobile || null]
         );
         userId = userRes.rows[0].id;
       }

@@ -5,7 +5,7 @@ const { logAudit } = require("../../utils/audit");
 
 exports.inviteUser = async (req, res) => {
   console.log("📥 Invite Request Body:", req.body);
-  const { first_name, last_name, email, role_name, tenant_id, merchant_id } = req.body;
+  const { email, role_name, tenant_id, merchant_id } = req.body;
 
   try {
     if (!email || !role_name) {
