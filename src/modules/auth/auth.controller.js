@@ -18,7 +18,7 @@ exports.login = async (req, res) => {
     const result = await pool.query(
       `SELECT u.*, t.status as tenant_status 
        FROM users u 
-       JOIN tenants t ON u.tenant_id = t.id 
+       LEFT JOIN tenants t ON u.tenant_id = t.id 
        WHERE u.email = $1 AND u.deleted_at IS NULL`,
       [email]
     );
@@ -35,7 +35,7 @@ exports.login = async (req, res) => {
       return res.status(403).json({ success: false, message: "Account is not active. Please contact support." });
     }
 
-    if (user.tenant_status !== 'active') {
+    if (user.tenant_id && user.tenant_status !== 'active') {
       return res.status(403).json({ success: false, message: "Your company account is suspended." });
     }
 
