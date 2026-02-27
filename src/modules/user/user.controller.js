@@ -78,6 +78,18 @@ exports.inviteUser = async (req, res) => {
     console.log(`📦 INVITE CREATED: Token=[${rawToken}] Hash=[${tokenHash}]`);
 
     // 4. Insert Invitation
+    console.log("🛠️ Preparing Invitation Insert:");
+    console.log("   - created_by (req.user.id):", req.user.id);
+    console.log("   - scope_id:", scopeId);
+    console.log("   - finalTenantId:", finalTenantId);
+
+    const checkUser = await pool.query("SELECT id FROM users WHERE id = $1", [req.user.id]);
+    if (checkUser.rows.length === 0) {
+      console.error("🚨 CRITICAL: The logged-in User ID does NOT exist in the database!");
+    } else {
+      console.log("✅ Verified: Logged-in User exists in DB.");
+    }
+
     await pool.query(
       `INSERT INTO user_invitations 
        (tenant_id, merchant_id, email, role_id, scope_type, scope_id, token_hash, expires_at, created_by)
