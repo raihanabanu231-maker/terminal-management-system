@@ -219,45 +219,27 @@ exports.registerWithInvite = async (req, res) => {
     const cleanToken = token.trim();
     const tokenHash = crypto.createHash('sha256').update(cleanToken).digest('hex');
 
-    console.log(`🔑 REGISTRATION_TRACE: TokenPrefix=[${cleanToken.substring(0, 5)}...] Hash=[${tokenHash}]`);
-
     // 1. Validate Invite
     const inviteResult = await pool.query(
-      `SELECT id, status, expires_at FROM user_invitations WHERE token_hash = $1`,
+      `SELECT * FROM user_invitations WHERE token_hash = $1`,
       [tokenHash]
     );
 
     if (inviteResult.rows.length === 0) {
-      console.log(`❌ REGISTRATION_TRACE: Hash not found in DB: ${tokenHash}`);
       return res.status(400).json({
         success: false,
-        message: "Invalid token: No invitation found matching this token.",
-        debug: {
-          provided_hash: tokenHash,
-          provided_length: cleanToken.length,
-          reason: "HASH_NOT_FOUND"
-        }
+        message: "Invalid or expired invite token"
       });
     }
 
     const invite = inviteResult.rows[0];
 
     if (invite.status !== 'pending') {
-      console.log(`❌ REGISTRATION_TRACE: Token status is ${invite.status}`);
-      return res.status(400).json({
-        success: false,
-        message: `This invitation has already been ${invite.status}.`,
-        debug: { status: invite.status, reason: "STATUS_NOT_PENDING" }
-      });
+      return res.status(400).json({ success: false, message: `This invitation has already been ${invite.status}.` });
     }
 
     if (new Date(invite.expires_at) < new Date()) {
-      console.log(`❌ REGISTRATION_TRACE: Token expired at ${invite.expires_at}`);
-      return res.status(400).json({
-        success: false,
-        message: "This invitation has expired.",
-        debug: { expires_at: invite.expires_at, reason: "EXPIRED" }
-      });
+      return res.status(400).json({ success: false, message: "This invitation has expired." });
     }
     // 2. Hash Password
     const hashedPassword = await bcrypt.hash(password, 10);
