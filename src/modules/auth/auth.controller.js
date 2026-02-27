@@ -224,20 +224,38 @@ exports.registerWithInvite = async (req, res) => {
 
     // 1. Validate Invite
     const inviteResult = await pool.query(
-      `SELECT * FROM user_invitations 
-       WHERE token_hash = $1 AND status = 'pending' AND expires_at > NOW()`,
+      `SELECT id, status, expires_at, email, tenant_id, role_id, scope_type, scope_id FROM user_invitations 
+       WHERE token_hash = $1`,
       [tokenHash]
     );
 
     if (inviteResult.rows.length === 0) {
+      // Check if the email exists but token is wrong (to guide user)
+      const emailCheck = await pool.query("SELECT * FROM user_invitations WHERE email = $1 AND status = 'pending'", [req.body.email]);
+      let debugMessage = "Invalid or expired invite token";
+      if (emailCheck.rows.length > 0) {
+        debugMessage = "Token mismatch: An invitation for this email exists, but the token provided is incorrect.";
+      }
+
       return res.status(400).json({
         success: false,
-        message: "Invalid or expired invite token"
+        message: debugMessage,
+        debug_info: {
+          provided_hash: tokenHash,
+          token_length: cleanToken.length
+        }
       });
     }
 
     const invite = inviteResult.rows[0];
 
+    if (invite.status !== 'pending') {
+      return res.status(400).json({ success: false, message: `Invitation has already been ${invite.status}.` });
+    }
+
+    if (new Date(invite.expires_at) < new Date()) {
+      return res.status(400).json({ success: false, message: "Invitation token has expired." });
+    }
     // 2. Hash Password
     const hashedPassword = await bcrypt.hash(password, 10);
 
