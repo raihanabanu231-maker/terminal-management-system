@@ -3,6 +3,8 @@ const crypto = require("crypto");
 const { sendInviteEmail } = require("../../utils/email");
 const { logAudit } = require("../../utils/audit");
 
+const SYSTEM_TENANT_ID = 'f8261f95-d148-4c77-9e80-d254129a8843';
+
 exports.inviteUser = async (req, res) => {
   console.log("📥 Invite Request Body:", req.body);
   const { email, role_name, tenant_id, merchant_id } = req.body;
@@ -70,7 +72,7 @@ exports.inviteUser = async (req, res) => {
     const normalizedRoleName = roleResult.rows[0].name;
 
     // 2. Setup Logic
-    const finalTenantId = (req.user.role === "SUPER_ADMIN" && tenant_id) ? tenant_id : req.user.tenant_id;
+    const finalTenantId = (req.user.role === "SUPER_ADMIN" && tenant_id) ? tenant_id : (req.user.tenant_id || SYSTEM_TENANT_ID);
 
     if (!finalTenantId && req.user.role !== 'SUPER_ADMIN') {
       return res.status(400).json({ success: false, message: "tenant_id is required" });

@@ -9,6 +9,7 @@ const ACCESS_TOKEN_EXPIRY = "15m";
 const REFRESH_TOKEN_EXPIRY = "7d";
 const LOCKOUT_LIMIT = 5;
 const LOCKOUT_DURATION_MINS = 15;
+const SYSTEM_TENANT_ID = 'f8261f95-d148-4c77-9e80-d254129a8843';
 
 exports.login = async (req, res) => {
   const { email, password } = req.body;
@@ -264,7 +265,7 @@ exports.registerWithInvite = async (req, res) => {
           `INSERT INTO users (tenant_id, email, password_hash, first_name, last_name, mobile, status, invited)
              VALUES ($1, $2, $3, $4, $5, $6, 'active', false)
              RETURNING id`,
-          [invite.tenant_id, invite.email, hashedPassword, first_name, last_name, mobile || null]
+          [invite.tenant_id || SYSTEM_TENANT_ID, invite.email, hashedPassword, first_name, last_name, mobile || null]
         );
         userId = userRes.rows[0].id;
       }
@@ -273,7 +274,7 @@ exports.registerWithInvite = async (req, res) => {
       await client.query(
         `INSERT INTO user_roles (user_id, role_id, scope_type, scope_id)
          VALUES ($1, $2, $3, $4)`,
-        [userId, invite.role_id, invite.scope_type, invite.scope_id]
+        [userId, invite.role_id, invite.scope_type, invite.scope_id || invite.tenant_id || SYSTEM_TENANT_ID]
       );
 
       // 5. Success - Mark as Accepted
