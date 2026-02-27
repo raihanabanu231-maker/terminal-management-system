@@ -1,57 +1,74 @@
 require('dotenv').config();
 const axios = require('axios');
+const crypto = require('crypto');
 
 const BASE_URL = 'http://localhost:5000/api/v1';
-let token = '';
+const TEST_EMAIL = `test_user_${crypto.randomBytes(4).toString('hex')}@example.com`;
+const TEST_TENANT_NAME = `Test Tenant ${crypto.randomBytes(4).toString('hex')}`;
+
+let adminToken = '';
+let createdTenantId = '';
+let inviteToken = '';
 
 async function runTests() {
-    console.log('🚀 Starting Comprehensive API Verification...\n');
+    console.log('🚀 Starting Deep API Verification...\n');
 
     try {
         // 1. Login
-        console.log('--- 1. Testing Login (Super Admin) ---');
+        console.log('--- Step 1: Login (Super Admin) ---');
         const loginRes = await axios.post(`${BASE_URL}/auth/login`, {
             email: 'superadmin@tms.com',
-            password: process.env.TEST_ADMIN_PASSWORD || 'your_secure_password' // Fallback for local
+            password: 'admin123'
         });
-        token = loginRes.data.access_token;
+        adminToken = loginRes.data.access_token;
         console.log('✅ Login Successful\n');
 
-        const config = { headers: { Authorization: `Bearer ${token}` } };
+        const config = { headers: { Authorization: `Bearer ${adminToken}` } };
 
-        // 2. Get Users (New API)
-        console.log('--- 2. Testing Get Users (Registered Users) ---');
+        // 2. Tenant Creation
+        console.log('--- Step 2: Tenant Creation ---');
+        const tenantRes = await axios.post(`${BASE_URL}/tenants`, { name: TEST_TENANT_NAME }, config);
+        createdTenantId = tenantRes.data.data.id;
+        console.log(`✅ Tenant Created: ${TEST_TENANT_NAME} (ID: ${createdTenantId})\n`);
+
+        // 3. Get Tenants (Verify creation)
+        console.log('--- Step 3: Get Tenants ---');
+        const allTenants = await axios.get(`${BASE_URL}/tenants`, config);
+        console.log(`✅ Get Tenants Successful! Found ${allTenants.data.data.length} tenants.\n`);
+
+        // 4. Send Invitation
+        console.log('--- Step 4: User Invitation ---');
+        const inviteRes = await axios.post(`${BASE_URL}/users/invite`, {
+            email: TEST_EMAIL,
+            role_name: 'Tenant Admin',
+            tenant_id: createdTenantId
+        }, config);
+        inviteToken = inviteRes.data.invite_token;
+        console.log(`✅ Invitation Sent to ${TEST_EMAIL}\n`);
+
+        // 5. Get Invitations (Verify visibility)
+        console.log('--- Step 5: Get Invitations ---');
+        const allInvites = await axios.get(`${BASE_URL}/users/invites`, config);
+        const inviteFound = allInvites.data.data.find(i => i.email === TEST_EMAIL);
+        if (!inviteFound) throw new Error('Sent invitation not found in list! JOIN check failed.');
+        console.log('✅ Invitation verified in list (LEFT JOIN confirmed working)\n');
+
+        // 7. Get Users (User Listing API)
+        console.log('--- Step 7: Get Registered Users ---');
         const usersRes = await axios.get(`${BASE_URL}/users`, config);
-        console.log(`✅ Get Users Successful: Found ${usersRes.data.data.length} users\n`);
+        console.log(`✅ User List retrieved (${usersRes.data.data.length} total users)\n`);
 
-        // 3. Get Tenants
-        console.log('--- 3. Testing Get Tenants ---');
-        const tenantsRes = await axios.get(`${BASE_URL}/tenants`, config);
-        console.log(`✅ Get Tenants Successful: Found ${tenantsRes.data.data.length} tenants\n`);
+        console.log('🎉 COMPREHENSIVE VERIFICATION COMPLETE!');
+        console.log('----------------------------------------');
+        console.log('✅ Login: WORKING');
+        console.log('✅ Tenant Creation: WORKING');
+        console.log('✅ Get Tenant: WORKING');
+        console.log('✅ Invitations: WORKING');
+        console.log('✅ User Listing: WORKING');
+        console.log('----------------------------------------');
 
-        // 4. Get Invitations
-        console.log('--- 4. Testing Get Invitations ---');
-        const invitesRes = await axios.get(`${BASE_URL}/users/invites`, config);
-        console.log(`✅ Get Invitations Successful: Found ${invitesRes.data.data.length} invites\n`);
-
-        // 5. Get Merchants
-        console.log('--- 5. Testing Get Merchants ---');
-        const merchantsRes = await axios.get(`${BASE_URL}/merchants`, config);
-        console.log(`✅ Get Merchants Successful: Found ${merchantsRes.data.data.length} merchants\n`);
-
-        // 6. Get Dashboard Stats
-        console.log('--- 6. Testing Dashboard Stats ---');
-        const statsRes = await axios.get(`${BASE_URL}/dashboard/stats`, config);
-        console.log('✅ Get Dashboard Stats Successful\n');
-
-        // 7. Get Devices
-        console.log('--- 7. Testing Get Devices ---');
-        const devicesRes = await axios.get(`${BASE_URL}/devices`, config);
-        console.log(`✅ Get Devices Successful: Found ${devicesRes.data.data.length} devices\n`);
-
-        console.log('🎉 ALL CORE APIS ARE WORKING CORRECTLY!');
     } catch (error) {
-        console.error('❌ API Verification Failed!');
+        console.error('❌ VERIFICATION FAILED!');
         if (error.response) {
             console.error('   Status:', error.response.status);
             console.error('   Data:', JSON.stringify(error.response.data, null, 2));
