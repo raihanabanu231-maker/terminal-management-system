@@ -220,16 +220,19 @@ exports.registerWithInvite = async (req, res) => {
     const cleanToken = (typeof token === 'string' ? token : String(token)).trim();
     const tokenHash = crypto.createHash('sha256').update(cleanToken).digest('hex');
 
+    console.log(`🔍 Register_Handshake: ReceivedTokenPrefix=[${cleanToken.substring(0, 5)}...] Length=${cleanToken.length} GeneratedHash=[${tokenHash}]`);
+
     // 1. Validate Invite
     const inviteResult = await pool.query(
-      `SELECT * FROM user_invitations WHERE token_hash = $1`,
+      `SELECT * FROM user_invitations WHERE token_hash ILIKE $1`,
       [tokenHash]
     );
 
     if (inviteResult.rows.length === 0) {
       return res.status(400).json({
         success: false,
-        message: "Invalid or expired invite token"
+        message: "Invalid or expired invite token (Not Found in DB)",
+        debug_received_hash: tokenHash
       });
     }
 
@@ -347,13 +350,17 @@ exports.getInviteDetails = async (req, res) => {
        FROM user_invitations ui
        LEFT JOIN roles r ON ui.role_id = r.id
        LEFT JOIN tenants t ON ui.tenant_id = t.id
-       WHERE ui.token_hash = $1`,
+       WHERE ui.token_hash ILIKE $1`,
       [tokenHash]
     );
 
     if (result.rows.length === 0) {
       console.log(`❌ Handshake_Trace: Hash not found in DB: ${tokenHash}`);
-      return res.status(400).json({ success: false, message: "Invalid or expired invite token (Not Found)" });
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired invite token (Not Found in DB)",
+        debug_received_hash: tokenHash
+      });
     }
 
     const invite = result.rows[0];
