@@ -207,14 +207,22 @@ exports.logout = async (req, res) => {
 };
 
 exports.registerWithInvite = async (req, res) => {
-  const { token, password, first_name, last_name, mobile } = req.body;
+  const { password, first_name, last_name, mobile } = req.body;
+  const token = req.body.token || req.query.token;
 
   try {
-    if (!token) return res.status(400).json({ success: false, message: "Token is required" });
+    if (!token) {
+      console.log("❌ Registration Failed: No token provided in body or query");
+      return res.status(400).json({ success: false, message: "Invitation token is required" });
+    }
+
     const cleanToken = token.trim();
     const tokenHash = crypto.createHash('sha256').update(cleanToken).digest('hex');
 
-    console.log(`🔑 Registration Attempt: Token=[${cleanToken}] Hash=[${tokenHash}]`);
+    console.log(`🔑 Registration Attempt: Token=[${cleanToken.substring(0, 5)}...] (Length: ${cleanToken.length})`);
+    console.log(`🔑 Produced Hash: ${tokenHash}`);
+
+    // 1. Validate Invite
     const inviteResult = await pool.query(
       `SELECT * FROM user_invitations 
        WHERE token_hash = $1 AND status = 'pending' AND expires_at > NOW()`,
