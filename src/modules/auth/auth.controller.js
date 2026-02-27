@@ -210,9 +210,11 @@ exports.registerWithInvite = async (req, res) => {
   const { token, password, first_name, last_name, mobile } = req.body;
 
   try {
-    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    if (!token) return res.status(400).json({ success: false, message: "Token is required" });
+    const cleanToken = token.trim();
+    const tokenHash = crypto.createHash('sha256').update(cleanToken).digest('hex');
 
-    // 1. Validate Invite
+    console.log(`🔑 Registration Attempt: Token=[${cleanToken}] Hash=[${tokenHash}]`);
     const inviteResult = await pool.query(
       `SELECT * FROM user_invitations 
        WHERE token_hash = $1 AND status = 'pending' AND expires_at > NOW()`,
@@ -308,7 +310,10 @@ exports.getInviteDetails = async (req, res) => {
       return res.status(400).json({ success: false, message: "Invitation token is missing" });
     }
 
-    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const cleanToken = token.trim();
+    const tokenHash = crypto.createHash('sha256').update(cleanToken).digest('hex');
+
+    console.log(`🔍 Handshake Attempt: Token=[${cleanToken}] Hash=[${tokenHash}]`);
 
     // 1. Fetch Invite and Join with Roles and Tenants
     const result = await pool.query(
