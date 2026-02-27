@@ -219,28 +219,45 @@ exports.registerWithInvite = async (req, res) => {
     const cleanToken = token.trim();
     const tokenHash = crypto.createHash('sha256').update(cleanToken).digest('hex');
 
+    console.log(`🔑 REGISTRATION_TRACE: TokenPrefix=[${cleanToken.substring(0, 5)}...] Hash=[${tokenHash}]`);
+
     // 1. Validate Invite
     const inviteResult = await pool.query(
-      `SELECT id, status, expires_at, email, tenant_id, role_id, scope_type, scope_id FROM user_invitations 
-       WHERE token_hash = $1`,
+      `SELECT id, status, expires_at FROM user_invitations WHERE token_hash = $1`,
       [tokenHash]
     );
 
     if (inviteResult.rows.length === 0) {
+      console.log(`❌ REGISTRATION_TRACE: Hash not found in DB: ${tokenHash}`);
       return res.status(400).json({
         success: false,
-        message: "Invalid or expired invite token"
+        message: "Invalid token: No invitation found matching this token.",
+        debug: {
+          provided_hash: tokenHash,
+          provided_length: cleanToken.length,
+          reason: "HASH_NOT_FOUND"
+        }
       });
     }
 
     const invite = inviteResult.rows[0];
 
     if (invite.status !== 'pending') {
-      return res.status(400).json({ success: false, message: `Invitation has already been ${invite.status}.` });
+      console.log(`❌ REGISTRATION_TRACE: Token status is ${invite.status}`);
+      return res.status(400).json({
+        success: false,
+        message: `This invitation has already been ${invite.status}.`,
+        debug: { status: invite.status, reason: "STATUS_NOT_PENDING" }
+      });
     }
 
     if (new Date(invite.expires_at) < new Date()) {
-      return res.status(400).json({ success: false, message: "Invitation token has expired." });
+      console.log(`❌ REGISTRATION_TRACE: Token expired at ${invite.expires_at}`);
+      return res.status(400).json({
+        success: false,
+        message: "This invitation has expired.",
+        debug: { expires_at: invite.expires_at, reason: "EXPIRED" }
+      });
     }
     // 2. Hash Password
     const hashedPassword = await bcrypt.hash(password, 10);
