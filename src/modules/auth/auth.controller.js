@@ -236,7 +236,9 @@ exports.registerWithInvite = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Invalid or expired invite token (Not Found in DB)",
-        debug_received_hash: tokenHash
+        debug_received_hash: tokenHash,
+        debug_db: dbCheck.rows[0].current_database,
+        debug_invitations_count: countCheck.rows[0].count
       });
     }
 
