@@ -324,23 +324,38 @@ exports.getInviteDetails = async (req, res) => {
     const cleanToken = token.trim();
     const tokenHash = crypto.createHash('sha256').update(cleanToken).digest('hex');
 
-    console.log(`🔍 Handshake Attempt: Token=[${cleanToken}] Hash=[${tokenHash}]`);
+    console.log(`🔍 Handshake_Trace: TokenPrefix=[${cleanToken.substring(0, 5)}...] Hash=[${tokenHash}]`);
 
     // 1. Fetch Invite and Join with Roles and Tenants
     const result = await pool.query(
-      `SELECT ui.email, r.name as role_name, t.name as company_name
+      `SELECT ui.*, r.name as role_name, t.name as company_name
        FROM user_invitations ui
-       JOIN roles r ON ui.role_id = r.id
+       LEFT JOIN roles r ON ui.role_id = r.id
        LEFT JOIN tenants t ON ui.tenant_id = t.id
-       WHERE ui.token_hash = $1 AND ui.status = 'pending' AND ui.expires_at > NOW()`,
+       WHERE ui.token_hash = $1`,
       [tokenHash]
     );
 
     if (result.rows.length === 0) {
-      return res.status(400).json({ success: false, message: "Invalid or expired invite token" });
+      console.log(`❌ Handshake_Trace: Hash not found in DB: ${tokenHash}`);
+      return res.status(400).json({ success: false, message: "Invalid or expired invite token (Not Found)" });
     }
 
     const invite = result.rows[0];
+    console.log(`🔍 Handshake_Trace: Invite Found. Email=[${invite.email}] Status=[${invite.status}] Expires=[${invite.expires_at}] RoleExists=[${!!invite.role_name}]`);
+
+    if (invite.status !== 'pending') {
+      return res.status(400).json({ success: false, message: `This invitation has already been ${invite.status}.` });
+    }
+
+    if (new Date(invite.expires_at) < new Date()) {
+      return res.status(400).json({ success: false, message: "This invitation has expired." });
+    }
+
+    if (!invite.role_name) {
+      console.error(`❌ Handshake_Trace: Role ${invite.role_id} is MISSING from roles table!`);
+      return res.status(400).json({ success: false, message: "Invitation is broken: assigned role no longer exists." });
+    }
 
     res.json({
       success: true,
