@@ -24,6 +24,17 @@ app.set("trust proxy", 1);
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
+// Handle JSON parsing errors
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    return res.status(400).json({
+      success: false,
+      message: "Malformed JSON: Please check your request body for syntax errors (e.g., missing commas or brackets).",
+      detail: err.message
+    });
+  }
+  next();
+});
 app.use(express.urlencoded({ extended: true }));
 
 // 🛡️ Global Rate Limiter (Week 4)
