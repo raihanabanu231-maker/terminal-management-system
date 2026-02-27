@@ -173,6 +173,40 @@ exports.getInvitations = async (req, res) => {
   }
 };
 
+exports.getUsers = async (req, res) => {
+  try {
+    let query = `
+      SELECT u.id, u.email, u.first_name, u.last_name, u.mobile, u.status, u.created_at,
+             t.name as tenant_name,
+             array_agg(r.name) as roles
+      FROM users u
+      LEFT JOIN tenants t ON u.tenant_id = t.id
+      LEFT JOIN user_roles ur ON u.id = ur.user_id
+      LEFT JOIN roles r ON ur.role_id = r.id
+    `;
+    const params = [];
+
+    if (req.user.role !== "SUPER_ADMIN") {
+      params.push(req.user.tenant_id);
+      query += ` WHERE u.tenant_id = $1`;
+    } else if (req.query.tenant_id) {
+      params.push(req.query.tenant_id);
+      query += ` WHERE u.tenant_id = $1`;
+    }
+
+    query += ` GROUP BY u.id, t.name ORDER BY u.created_at DESC`;
+
+    const result = await pool.query(query, params);
+    res.status(200).json({
+      success: true,
+      data: result.rows
+    });
+  } catch (error) {
+    console.error("GetUsers Error:", error);
+    res.status(500).json({ success: false, message: "Server error", detail: error.message });
+  }
+};
+
 exports.deleteInvitation = async (req, res) => {
   const { id } = req.params;
 
