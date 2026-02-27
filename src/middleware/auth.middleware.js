@@ -1,9 +1,9 @@
 const jwt = require("jsonwebtoken");
 
 exports.verifyToken = (req, res, next) => {
-    const token = req.header("Authorization");
+    const authHeader = req.header("Authorization");
 
-    if (!token) {
+    if (!authHeader) {
         return res.status(401).json({
             success: false,
             message: "Access Denied: No token provided",
@@ -12,15 +12,18 @@ exports.verifyToken = (req, res, next) => {
 
     try {
         // Remove "Bearer " prefix if present
-        const tokenString = token.startsWith("Bearer ") ? token.slice(7, token.length) : token;
+        const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : authHeader;
 
-        const verified = jwt.verify(tokenString, process.env.JWT_SECRET);
+        const verified = jwt.verify(token, process.env.JWT_SECRET);
         req.user = verified;
         next();
     } catch (error) {
-        res.status(400).json({
+        console.error("TOKEN_VERIFICATION_ERROR:", error.message);
+        res.status(401).json({
             success: false,
-            message: "Invalid Token",
+            message: error.message === "jwt expired" ? "Token expired" : "Invalid Token",
+            detail: error.message
         });
     }
 };
+极端
