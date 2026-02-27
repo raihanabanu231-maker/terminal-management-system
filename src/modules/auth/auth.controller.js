@@ -352,22 +352,22 @@ exports.getInviteDetails = async (req, res) => {
       return res.status(400).json({ success: false, message: "This invitation has expired." });
     }
 
-    if (!invite.role_name) {
-      console.error(`❌ Handshake_Trace: Role ${invite.role_id} is MISSING from roles table!`);
-      return res.status(400).json({ success: false, message: "Invitation is broken: assigned role no longer exists." });
-    }
-
     res.json({
       success: true,
       data: {
         email: invite.email,
-        company_name: invite.company_name,
-        role: invite.role_name
+        company_name: invite.company_name || "Our Company",
+        role: invite.role_name || "Member"
       }
     });
 
   } catch (error) {
     console.error("GetInviteDetails Error:", error);
-    res.status(500).json({ success: false, message: "Server error" });
+    res.status(500).json({
+      success: false,
+      message: "Server error during invitation verification",
+      detail: error.message,
+      code: error.code
+    });
   }
 };

@@ -41,6 +41,15 @@ exports.inviteUser = async (req, res) => {
     } else {
       // Super admin can search in the target tenant's specific roles if provided
       if (tenant_id) {
+        // Validate UUID syntax before querying to avoid 22P02 error
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!uuidRegex.test(tenant_id)) {
+          console.log(`❌ Validation Failed: Invalid UUID format for tenant_id: [${tenant_id}]`);
+          return res.status(400).json({
+            success: false,
+            message: "Invalid tenant_id format. Must be a valid UUID."
+          });
+        }
         roleQuery += " OR tenant_id = $2";
         roleParams.push(tenant_id);
       } else {
@@ -65,6 +74,16 @@ exports.inviteUser = async (req, res) => {
 
     if (!finalTenantId && req.user.role !== 'SUPER_ADMIN') {
       return res.status(400).json({ success: false, message: "tenant_id is required" });
+    }
+
+    // Comprehensive UUID validation for both fields to prevent 22P02 errors
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    if (finalTenantId && !uuidRegex.test(finalTenantId)) {
+      return res.status(400).json({ success: false, message: "Invalid tenant_id format." });
+    }
+    if (merchant_id && !uuidRegex.test(merchant_id)) {
+      return res.status(400).json({ success: false, message: "Invalid merchant_id format." });
     }
 
     const scopeType = merchant_id ? 'merchant' : 'tenant';
