@@ -316,6 +316,10 @@ exports.registerWithInvite = async (req, res) => {
   }
 };
 
+exports.ping = (req, res) => {
+  res.json({ success: true, message: "Auth Controller Ping - v3 (Unbreakable)", timestamp: new Date() });
+};
+
 exports.getInviteDetails = async (req, res) => {
   let token = req.body.token || req.query.token;
 
