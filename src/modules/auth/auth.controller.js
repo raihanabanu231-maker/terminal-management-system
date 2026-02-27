@@ -219,9 +219,6 @@ exports.registerWithInvite = async (req, res) => {
     const cleanToken = token.trim();
     const tokenHash = crypto.createHash('sha256').update(cleanToken).digest('hex');
 
-    console.log(`🔑 Registration Attempt: Token=[${cleanToken.substring(0, 5)}...] (Length: ${cleanToken.length})`);
-    console.log(`🔑 Produced Hash: ${tokenHash}`);
-
     // 1. Validate Invite
     const inviteResult = await pool.query(
       `SELECT id, status, expires_at, email, tenant_id, role_id, scope_type, scope_id FROM user_invitations 
@@ -230,20 +227,9 @@ exports.registerWithInvite = async (req, res) => {
     );
 
     if (inviteResult.rows.length === 0) {
-      // Check if the email exists but token is wrong (to guide user)
-      const emailCheck = await pool.query("SELECT * FROM user_invitations WHERE email = $1 AND status = 'pending'", [req.body.email]);
-      let debugMessage = "Invalid or expired invite token";
-      if (emailCheck.rows.length > 0) {
-        debugMessage = "Token mismatch: An invitation for this email exists, but the token provided is incorrect.";
-      }
-
       return res.status(400).json({
         success: false,
-        message: debugMessage,
-        debug_info: {
-          provided_hash: tokenHash,
-          token_length: cleanToken.length
-        }
+        message: "Invalid or expired invite token"
       });
     }
 
