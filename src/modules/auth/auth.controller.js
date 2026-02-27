@@ -326,7 +326,7 @@ exports.registerWithInvite = async (req, res) => {
 };
 
 exports.ping = (req, res) => {
-  res.json({ success: true, message: "Auth Controller Ping - v4 (Robust)", timestamp: new Date() });
+  res.json({ success: true, message: "Auth Controller Ping - v5 (Diagnostics)", timestamp: new Date() });
 };
 
 exports.getInviteDetails = async (req, res) => {
