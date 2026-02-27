@@ -130,8 +130,15 @@ exports.inviteUser = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Invite Error:", error);
-    res.status(500).json({ success: false, message: "Server error", detail: error.message });
+    console.error("INVITE_ERROR:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      detail: error.detail,
+      hint: error.hint,
+      code: error.code,
+      stack: error.stack // Temporarily for deep debugging
+    });
   }
 };
 
