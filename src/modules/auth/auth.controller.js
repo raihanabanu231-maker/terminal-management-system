@@ -223,6 +223,10 @@ exports.registerWithInvite = async (req, res) => {
     console.log(`🔍 Register_Handshake: ReceivedTokenPrefix=[${cleanToken.substring(0, 5)}...] Length=${cleanToken.length} GeneratedHash=[${tokenHash}]`);
 
     // 1. Validate Invite
+    const dbCheck = await pool.query("SELECT current_database(), current_user, inet_server_addr()");
+    const countCheck = await pool.query("SELECT count(*) FROM user_invitations");
+    console.log(`🔍 DB_Check: DB=[${dbCheck.rows[0].current_database}] User=[${dbCheck.rows[0].current_user}] IP=[${dbCheck.rows[0].inet_server_addr}] TotalInvitations=[${countCheck.rows[0].count}]`);
+
     const inviteResult = await pool.query(
       `SELECT * FROM user_invitations WHERE token_hash ILIKE $1`,
       [tokenHash]
