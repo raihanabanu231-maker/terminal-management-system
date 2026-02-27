@@ -251,7 +251,12 @@ exports.registerWithInvite = async (req, res) => {
     if (new Date(invite.expires_at) < new Date()) {
       return res.status(400).json({ success: false, message: "This invitation has expired." });
     }
-    // 2. Hash Password
+
+    // 2. Hash Password (Defensive check to prevent 500 if password missing)
+    if (!password) {
+      console.log("❌ Registration Failed: Password missing in body");
+      return res.status(400).json({ success: false, message: "Password is required for registration" });
+    }
     const hashedPassword = await bcrypt.hash(password, 10);
 
     // 3. Create User in Transaction
@@ -348,15 +353,16 @@ exports.getInviteDetails = async (req, res) => {
     const cleanToken = (typeof token === 'string' ? token : String(token)).trim();
     const tokenHash = crypto.createHash('sha256').update(cleanToken).digest('hex');
 
-    console.log(`🔍 Handshake_Trace: TokenPrefix=[${cleanToken.substring(0, 5)}...] Hash=[${tokenHash}]`);
+    console.log(`🔍 Handshake_Trace: TokenPrefix=[${cleanToken.substring(0, 5)}...] Length=${cleanToken.length} Hash=[${tokenHash}]`);
 
     // 1. Fetch Invite and Join with Roles and Tenants
+    // Use '=' instead of 'ILIKE' for precise hash matching
     const result = await pool.query(
       `SELECT ui.*, r.name as role_name, t.name as company_name
        FROM user_invitations ui
        LEFT JOIN roles r ON ui.role_id = r.id
        LEFT JOIN tenants t ON ui.tenant_id = t.id
-       WHERE ui.token_hash ILIKE $1`,
+       WHERE ui.token_hash = $1`,
       [tokenHash]
     );
 
