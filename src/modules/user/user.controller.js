@@ -5,7 +5,6 @@ const { logAudit } = require("../../utils/audit");
 
 exports.inviteUser = async (req, res) => {
   console.log("📥 Invite Request Body:", req.body);
-  console.log("👤 Authenticated User:", req.user);
   const { email, role_name, tenant_id, merchant_id } = req.body;
 
   try {
@@ -87,9 +86,13 @@ exports.inviteUser = async (req, res) => {
     );
 
     // 5. Fetch Company Name for Email Personalization
-    const tenantResult = await pool.query("SELECT name FROM tenants WHERE id = $1", [finalTenantId]);
-    const companyName = tenantResult.rows[0]?.name || "Our Company";
-
+    let companyName = "Our Company";
+    if (finalTenantId) {
+      const tenantResult = await pool.query("SELECT name FROM tenants WHERE id = $1", [finalTenantId]);
+      companyName = tenantResult.rows[0]?.name || "Our Company";
+    } else {
+      companyName = "Global TMS System";
+    }
     // 6. Send Professional Email
     const frontendUrl = (process.env.FRONTEND_URL || "https://atpl-tms-frontend.onrender.com").replace(/\/$/, "");
     // 🎯 Constructing the link for History Mode (Confirmed working previously)
