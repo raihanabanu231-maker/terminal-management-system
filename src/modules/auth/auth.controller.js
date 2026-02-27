@@ -216,7 +216,7 @@ exports.registerWithInvite = async (req, res) => {
       return res.status(400).json({ success: false, message: "Invitation token is required" });
     }
 
-    const cleanToken = token.trim();
+    const cleanToken = (typeof token === 'string' ? token : String(token)).trim();
     const tokenHash = crypto.createHash('sha256').update(cleanToken).digest('hex');
 
     // 1. Validate Invite
@@ -300,8 +300,18 @@ exports.registerWithInvite = async (req, res) => {
     }
 
   } catch (error) {
-    console.error("Register Error:", error);
-    res.status(500).json({ success: false, message: "Server error" });
+    console.error("Register Error (500):", {
+      message: error.message,
+      stack: error.stack,
+      code: error.code,
+      detail: error.detail
+    });
+    res.status(500).json({
+      success: false,
+      message: "Server error during registration",
+      detail: error.message,
+      code: error.code
+    });
   }
 };
 
@@ -309,7 +319,7 @@ exports.getInviteDetails = async (req, res) => {
   let token = req.body.token || req.query.token;
 
   if (token) {
-    token = token.trim();
+    token = (typeof token === 'string' ? token : String(token)).trim();
     console.log(`🔍 Handshake Received. Token: [${token}] (Length: ${token.length})`);
   } else {
     console.log("🔍 Handshake Received. No token found.");
@@ -321,7 +331,7 @@ exports.getInviteDetails = async (req, res) => {
       return res.status(400).json({ success: false, message: "Invitation token is missing" });
     }
 
-    const cleanToken = token.trim();
+    const cleanToken = (typeof token === 'string' ? token : String(token)).trim();
     const tokenHash = crypto.createHash('sha256').update(cleanToken).digest('hex');
 
     console.log(`🔍 Handshake_Trace: TokenPrefix=[${cleanToken.substring(0, 5)}...] Hash=[${tokenHash}]`);
