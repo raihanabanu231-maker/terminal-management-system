@@ -147,7 +147,7 @@ exports.getInvitations = async (req, res) => {
     let query = `
       SELECT ui.*, t.name as tenant_name, r.name as role_name 
       FROM user_invitations ui
-      JOIN tenants t ON ui.tenant_id = t.id
+      LEFT JOIN tenants t ON ui.tenant_id = t.id
       JOIN roles r ON ui.role_id = r.id
     `;
     const params = [];

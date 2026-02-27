@@ -19,7 +19,8 @@ exports.createTenant = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Server error",
-      detail: error.message
+      detail: error.detail || error.message,
+      code: error.code
     });
   }
 };

@@ -315,7 +315,7 @@ exports.getInviteDetails = async (req, res) => {
       `SELECT ui.email, r.name as role_name, t.name as company_name
        FROM user_invitations ui
        JOIN roles r ON ui.role_id = r.id
-       JOIN tenants t ON ui.tenant_id = t.id
+       LEFT JOIN tenants t ON ui.tenant_id = t.id
        WHERE ui.token_hash = $1 AND ui.status = 'pending' AND ui.expires_at > NOW()`,
       [tokenHash]
     );
