@@ -72,6 +72,13 @@ exports.inviteUser = async (req, res) => {
     const normalizedRoleName = roleResult.rows[0].name;
 
     // 2. Setup Logic
+    if (req.user.role === "SUPER_ADMIN" && !tenant_id) {
+      return res.status(400).json({
+        success: false,
+        message: "tenant_id is REQUIRED. Please check your frontend payload (ensure it is snake_case 'tenant_id', not 'tenantId')."
+      });
+    }
+
     const finalTenantId = (req.user.role === "SUPER_ADMIN" && tenant_id) ? tenant_id : (req.user.tenant_id || SYSTEM_TENANT_ID);
 
     if (!finalTenantId && req.user.role !== 'SUPER_ADMIN') {
