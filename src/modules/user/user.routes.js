@@ -9,7 +9,7 @@ const { authorizeRoles } = require("../../middleware/role.middleware");
 router.post(
   "/invite",
   verifyToken,
-  authorizeRoles("SUPER_ADMIN"),
+  authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "MERCHANT_ADMIN"),
   inviteUser
 );
 
