@@ -94,7 +94,7 @@ exports.login = async (req, res) => {
       tenant_id: user.tenant_id,
       jti: jti,
       roles: roles.map(r => ({ name: r.name, id: r.role_id, scope: r.scope_type })),
-      role: (roles[0]?.name || "USER").toUpperCase().replace(/\s+/g, "_")
+      role: (roles[0]?.name || "USER").trim().toUpperCase().replace(/\s+/g, "_")
     };
 
     const accessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: ACCESS_TOKEN_EXPIRY });
@@ -169,7 +169,7 @@ exports.refresh = async (req, res) => {
       tenant_id: tenantId,
       jti: decoded.jti,
       roles: roles.map(r => ({ name: r.name, id: r.role_id, scope: r.scope_type })),
-      role: (roles[0]?.name || "USER").toUpperCase().replace(/\s+/g, "_")
+      role: (roles[0]?.name || "USER").trim().toUpperCase().replace(/\s+/g, "_")
     };
 
     const accessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: ACCESS_TOKEN_EXPIRY });
