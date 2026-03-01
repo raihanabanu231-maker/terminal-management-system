@@ -1,0 +1,17 @@
+[
+  {
+    "id": "8929d88e-0127-410d-9b83-d4c4b4a2c4b9",
+    "name": "Super Admin",
+    "tenant_id": null
+  },
+  {
+    "id": "c6597fb0-69cc-4a6b-93d8-4ea9ef926284",
+    "name": "Tenant Admin",
+    "tenant_id": null
+  },
+  {
+    "id": "76edfb20-19ce-4f5a-b84a-ca5f3f3b8000",
+    "name": "Operator",
+    "tenant_id": null
+  }
+]

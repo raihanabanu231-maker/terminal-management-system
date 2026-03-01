@@ -1,4 +1,5 @@
 const pool = require("../../config/db");
+const crypto = require("crypto");
 
 // Create a new Merchant (Store/Region)
 exports.createMerchant = async (req, res) => {
@@ -9,12 +10,44 @@ exports.createMerchant = async (req, res) => {
         ? tenant_id
         : req.user.tenant_id;
 
+    if (!finalTenantId && req.user.role !== "SUPER_ADMIN") {
+        return res.status(400).json({ success: false, message: "tenant_id missing from context" });
+    }
+    if (req.user.role === "SUPER_ADMIN" && !finalTenantId) {
+        return res.status(400).json({ success: false, message: "tenant_id is REQUIRED for superadmin." });
+    }
+
     try {
+        const newId = crypto.randomUUID();
+        let path = `${newId}.`;
+
+        if (parent_id) {
+            const parentRes = await pool.query("SELECT tenant_id, path FROM merchants WHERE id = $1", [parent_id]);
+            if (parentRes.rows.length === 0) {
+                return res.status(404).json({ success: false, message: "Parent merchant not found" });
+            }
+            if (parentRes.rows[0].tenant_id !== finalTenantId) {
+                return res.status(400).json({ success: false, message: "Parent merchant belongs to a different tenant" });
+            }
+            path = `${parentRes.rows[0].path}${newId}.`;
+        }
+
+        // Check Merchant Admin scoping
+        const merchantRole = req.user.roles?.find(r => r.scope === 'merchant');
+        if (req.user.role === 'MERCHANT_ADMIN' || merchantRole) {
+            if (!parent_id) {
+                return res.status(403).json({ success: false, message: "Merchant admins cannot create top-level merchants. Must provide a valid parent_id." });
+            }
+            if (!path.includes(merchantRole.scope_id)) {
+                return res.status(403).json({ success: false, message: "You can only create stores under your own authorized merchant scope." });
+            }
+        }
+
         const result = await pool.query(
-            `INSERT INTO merchants (name, tenant_id, parent_id, external_id, path) 
-             VALUES ($1, $2, $3, $4, '') 
+            `INSERT INTO merchants (id, name, tenant_id, parent_id, external_id, path) 
+             VALUES ($1, $2, $3, $4, $5, $6) 
              RETURNING *`,
-            [name, finalTenantId, parent_id || null, external_id || null]
+            [newId, name, finalTenantId, parent_id || null, external_id || null, path]
         );
 
         res.status(201).json({
@@ -48,11 +81,11 @@ exports.getMerchants = async (req, res) => {
             params.push(req.user.tenant_id);
             query += ` WHERE m.tenant_id = $${params.length}`;
 
-            // 🎯 NEW: Merchant Scoping
             // Check if user has a merchant scope in their JWT
             const merchantRole = req.user.roles?.find(r => r.scope === 'merchant');
             if (merchantRole) {
                 params.push(merchantRole.scope_id);
+                // Safe query construction using a subquery to fetch the precise path of their scope_id
                 query += ` AND m.path LIKE (SELECT path FROM merchants WHERE id = $${params.length}) || '%'`;
             }
         }

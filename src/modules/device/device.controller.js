@@ -3,17 +3,32 @@ const crypto = require("crypto");
 const QRCode = require("qrcode");
 const { logAudit } = require("../../utils/audit");
 
-// 1. Generate Enrollment Token
+// 1. Generate Enrollment Token (Pre-Registration)
 exports.generateEnrollmentToken = async (req, res) => {
-    const tenant_id = (req.user.role === "SUPER_ADMIN" && req.body.tenant_id)
-        ? req.body.tenant_id
+    const { serial, model, merchant_id, tenant_id } = req.body;
+
+    // A device MUST be assigned to a specific store (merchant)
+    if (!merchant_id) {
+        return res.status(400).json({ success: false, message: "merchant_id is required to onboard a device" });
+    }
+    if (!serial) {
+        return res.status(400).json({ success: false, message: "Device serial number is required" });
+    }
+
+    const finalTenantId = (req.user.role === "SUPER_ADMIN" && tenant_id)
+        ? tenant_id
         : req.user.tenant_id;
 
-    if (!tenant_id) {
+    if (!finalTenantId) {
         return res.status(400).json({ success: false, message: "tenant_id is required" });
     }
 
     try {
+        // Verify merchant belongs to the same tenant and exists
+        const merchRes = await pool.query("SELECT id FROM merchants WHERE id = $1 AND tenant_id = $2", [merchant_id, finalTenantId]);
+        if (merchRes.rows.length === 0) {
+            return res.status(404).json({ success: false, message: "Merchant not found or does not belong to this tenant" });
+        }
         const token = crypto.randomBytes(32).toString("hex");
         const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
         const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
@@ -24,10 +39,10 @@ exports.generateEnrollmentToken = async (req, res) => {
              VALUES ($1, $2, $3, $4, $5, $6, 'pending_onboard')
              ON CONFLICT (serial) 
              DO UPDATE SET enrollment_token = $3, enrollment_token_expires = $4, status = 'pending_onboard'`,
-            [serial, model || 'Standard', tokenHash, expiresAt, merchant_id || null, tenant_id]
+            [serial, model || 'Standard', tokenHash, expiresAt, merchant_id || null, finalTenantId]
         );
 
-        const qrData = JSON.stringify({ token: token, tenant_id: tenant_id, serial: serial });
+        const qrData = JSON.stringify({ token: token, tenant_id: finalTenantId, serial: serial });
         const qrCodeImage = await QRCode.toDataURL(qrData);
 
         res.json({
@@ -37,8 +52,8 @@ exports.generateEnrollmentToken = async (req, res) => {
             expires_at: expiresAt
         });
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: "Server error" });
+        console.error("GENERATE ENROLLMENT TOKEN ERROR:", error);
+        res.status(500).json({ message: "Server error", detail: error.message });
     }
 };
 

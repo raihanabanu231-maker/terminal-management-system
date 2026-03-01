@@ -1,0 +1,66 @@
+[
+  {
+    "id": "53401707-d50e-451d-b2dd-c49eee831e3c",
+    "name": "Testing tenant2"
+  },
+  {
+    "id": "7dd953ae-a358-4143-bcd5-d01ac669887f",
+    "name": "atpl"
+  },
+  {
+    "id": "e0dc0478-786e-477f-8e64-16aa4be2b42a",
+    "name": "Verification Tenant 3c88e523"
+  },
+  {
+    "id": "4bad71dc-f6ba-4b98-aebb-10a44c25bae0",
+    "name": "atpl"
+  },
+  {
+    "id": "5d27858b-8bef-4ea4-9692-48ca24291b78",
+    "name": "atpl"
+  },
+  {
+    "id": "fb27c00c-fdc6-47e1-a646-ba48f6a75986",
+    "name": "atpl"
+  },
+  {
+    "id": "c70a06ca-fba0-4011-9fac-960e48e7514e",
+    "name": "atpl"
+  },
+  {
+    "id": "036c216e-cadd-4668-8944-518c96091f7a",
+    "name": "atpl"
+  },
+  {
+    "id": "22303235-0529-4cf5-9551-4266b66e9aed",
+    "name": "atpl"
+  },
+  {
+    "id": "7423cf35-c0a8-42a7-bbab-1604d2640750",
+    "name": "atpl"
+  },
+  {
+    "id": "2f94a05a-6616-4ed9-8daa-9cf99872a1dc",
+    "name": "tenant dummy"
+  },
+  {
+    "id": "11d67130-3497-4c0a-8e36-1919ff0a0101",
+    "name": "atpl"
+  },
+  {
+    "id": "b404d23e-94a5-4a69-8302-4a5c3991e8cf",
+    "name": "company"
+  },
+  {
+    "id": "88cf079a-e4f8-41ae-b067-981510438801",
+    "name": "Test Hardware Corp"
+  },
+  {
+    "id": "c827e85b-1352-465b-ad2c-d6cbc65f975a",
+    "name": "company"
+  },
+  {
+    "id": "2cfa56ea-696c-4e21-8920-9a4daba0b6bc",
+    "name": "company"
+  }
+]

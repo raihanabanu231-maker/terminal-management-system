@@ -23,11 +23,11 @@ router.get(
     getDevices
 );
 
-// Generate Token (Protected: Only Super Admin can do this for testing)
+// Generate Token (Protected: Super, Tenant, and Merchant Admins)
 router.post(
     "/enroll-token",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN"),
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "MERCHANT_ADMIN"),
     generateEnrollmentToken
 );
 

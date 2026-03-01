@@ -1,0 +1,142 @@
+{
+  "user_invitations": [
+    {
+      "column_name": "id",
+      "column_default": "gen_random_uuid()"
+    },
+    {
+      "column_name": "tenant_id",
+      "column_default": null
+    },
+    {
+      "column_name": "merchant_id",
+      "column_default": null
+    },
+    {
+      "column_name": "email",
+      "column_default": null
+    },
+    {
+      "column_name": "role_id",
+      "column_default": null
+    },
+    {
+      "column_name": "scope_type",
+      "column_default": null
+    },
+    {
+      "column_name": "scope_id",
+      "column_default": null
+    },
+    {
+      "column_name": "token_hash",
+      "column_default": null
+    },
+    {
+      "column_name": "expires_at",
+      "column_default": null
+    },
+    {
+      "column_name": "created_by",
+      "column_default": null
+    },
+    {
+      "column_name": "created_at",
+      "column_default": "now()"
+    },
+    {
+      "column_name": "status",
+      "column_default": "'pending'::text"
+    }
+  ],
+  "roles": [
+    {
+      "column_name": "id",
+      "column_default": "gen_random_uuid()"
+    },
+    {
+      "column_name": "tenant_id",
+      "column_default": null
+    },
+    {
+      "column_name": "name",
+      "column_default": null
+    },
+    {
+      "column_name": "permissions",
+      "column_default": "'{}'::text[]"
+    }
+  ],
+  "tenants": [
+    {
+      "column_name": "id",
+      "column_default": "gen_random_uuid()"
+    },
+    {
+      "column_name": "name",
+      "column_default": null
+    },
+    {
+      "column_name": "status",
+      "column_default": "'active'::text"
+    },
+    {
+      "column_name": "created_at",
+      "column_default": "now()"
+    }
+  ],
+  "users": [
+    {
+      "column_name": "id",
+      "column_default": "gen_random_uuid()"
+    },
+    {
+      "column_name": "tenant_id",
+      "column_default": null
+    },
+    {
+      "column_name": "email",
+      "column_default": null
+    },
+    {
+      "column_name": "password_hash",
+      "column_default": null
+    },
+    {
+      "column_name": "first_name",
+      "column_default": null
+    },
+    {
+      "column_name": "last_name",
+      "column_default": null
+    },
+    {
+      "column_name": "mobile",
+      "column_default": null
+    },
+    {
+      "column_name": "invited",
+      "column_default": "false"
+    },
+    {
+      "column_name": "status",
+      "column_default": "'pending'::text"
+    },
+    {
+      "column_name": "created_at",
+      "column_default": "now()"
+    },
+    {
+      "column_name": "deleted_at",
+      "column_default": null
+    },
+    {
+      "column_name": "failed_attempts",
+      "column_default": "0"
+    },
+    {
+      "column_name": "locked_until",
+      "column_default": null
+    }
+  ]
+}
