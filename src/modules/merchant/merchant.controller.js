@@ -93,7 +93,33 @@ exports.getMerchants = async (req, res) => {
         query += " ORDER BY m.path ASC";
 
         const result = await pool.query(query, params);
-        res.json({ success: true, count: result.rows.length, data: result.rows });
+
+        // Convert flat array to nested hierarchy tree
+        const buildHierarchy = (merchants) => {
+            const map = {};
+            const roots = [];
+
+            // First pass: map all merchants by their ID and initialize empty children array
+            merchants.forEach(merchant => {
+                map[merchant.id] = { ...merchant, children: [] };
+            });
+
+            // Second pass: assign each merchant to its parent's children array
+            merchants.forEach(merchant => {
+                if (merchant.parent_id && map[merchant.parent_id]) {
+                    map[merchant.parent_id].children.push(map[merchant.id]);
+                } else {
+                    // No parent_id or parent not found in current scope, treat as a root
+                    roots.push(map[merchant.id]);
+                }
+            });
+
+            return roots;
+        };
+
+        const hierarchyData = buildHierarchy(result.rows);
+
+        res.json({ success: true, count: result.rows.length, data: hierarchyData });
     } catch (error) {
         console.error("GetMerchants ERROR:", error);
         res.status(500).json({ message: "Server error", detail: error.message });
