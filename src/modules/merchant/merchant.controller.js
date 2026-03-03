@@ -42,9 +42,10 @@ exports.createMerchant = async (req, res) => {
 
         const newId = crypto.randomUUID();
         let path = `${newId}`;
+        let name_path = `${name}`;
 
         if (parent_id) {
-            const parentRes = await pool.query("SELECT tenant_id, path FROM merchants WHERE id = $1", [parent_id]);
+            const parentRes = await pool.query("SELECT tenant_id, path, name_path FROM merchants WHERE id = $1", [parent_id]);
             if (parentRes.rows.length === 0) {
                 return res.status(404).json({ success: false, message: "Parent merchant not found" });
             }
@@ -52,6 +53,7 @@ exports.createMerchant = async (req, res) => {
                 return res.status(400).json({ success: false, message: "Parent merchant belongs to a different tenant" });
             }
             path = `${parentRes.rows[0].path}/${newId}`;
+            name_path = parentRes.rows[0].name_path ? `${parentRes.rows[0].name_path}/${name}` : `${name}`;
         }
 
         // Check Merchant Admin scoping
@@ -66,10 +68,10 @@ exports.createMerchant = async (req, res) => {
         }
 
         const result = await pool.query(
-            `INSERT INTO merchants (id, name, tenant_id, parent_id, external_id, path) 
-             VALUES ($1, $2, $3, $4, $5, $6) 
+            `INSERT INTO merchants (id, name, tenant_id, parent_id, external_id, path, name_path) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7) 
              RETURNING *`,
-            [newId, name, finalTenantId, parent_id || null, external_id || null, path]
+            [newId, name, finalTenantId, parent_id || null, external_id || null, path, name_path]
         );
 
         res.status(201).json({
@@ -174,10 +176,11 @@ exports.updateMerchant = async (req, res) => {
         // Prevent circular loops (can't make a merchant a child of itself or its own children)
         if (parent_id) {
             if (parent_id === id) return res.status(400).json({ success: false, message: "Cannot set merchant as its own parent" });
-            const parentRes = await pool.query("SELECT path FROM merchants WHERE id = $1", [parent_id]);
+            const parentRes = await pool.query("SELECT path, name_path FROM merchants WHERE id = $1", [parent_id]);
             if (parentRes.rows.length === 0) return res.status(404).json({ success: false, message: "Parent not found" });
 
             const newParentPath = parentRes.rows[0].path;
+            const newParentNamePath = parentRes.rows[0].name_path || "";
             if (newParentPath.includes(id)) {
                 return res.status(400).json({ success: false, message: "Circular hierarchy loop detected: Parent cannot be inside the current merchant's child tree." });
             }
@@ -192,30 +195,65 @@ exports.updateMerchant = async (req, res) => {
         try {
             await client.query("BEGIN");
 
+            // Build new name_path if name or parent changed
+            let calculatedNamePath = currentMerchant.name_path;
+            let finalName = name || currentMerchant.name;
+
+            if (parent_id !== undefined || name) {
+                if (parent_id) {
+                    const parentData = await client.query("SELECT name_path FROM merchants WHERE id = $1", [parent_id]);
+                    calculatedNamePath = parentData.rows[0].name_path ? `${parentData.rows[0].name_path}/${finalName}` : finalName;
+                } else if (parent_id === null) {
+                    calculatedNamePath = finalName; // moved to root
+                } else {
+                    // name changed but parent didn't
+                    const parts = currentMerchant.name_path ? currentMerchant.name_path.split('/') : [];
+                    parts.pop();
+                    parts.push(finalName);
+                    calculatedNamePath = parts.join('/');
+                }
+            }
+
             // Apply straightforward updates (DB trigger automatically updates `path` for the moved merchant)
             const updateRes = await client.query(
                 `UPDATE merchants 
                  SET name = COALESCE($1, name), 
                      parent_id = $2, 
-                     external_id = COALESCE($3, external_id) 
-                 WHERE id = $4 
+                     external_id = COALESCE($3, external_id),
+                     name_path = $4
+                 WHERE id = $5 
                  RETURNING *`,
-                [name || null, parent_id !== undefined ? parent_id : currentMerchant.parent_id, external_id || null, id]
+                [name || null, parent_id !== undefined ? parent_id : currentMerchant.parent_id, external_id || null, calculatedNamePath, id]
             );
 
             const updatedMerchant = updateRes.rows[0];
 
-            // If the parent changed, we must recursively fix the paths of ALL child merchants beneath it
-            if (parent_id !== undefined && parent_id !== currentMerchant.parent_id) {
+            // If the parent or name changed, we must recursively fix the paths of ALL child merchants beneath it
+            if ((parent_id !== undefined && parent_id !== currentMerchant.parent_id) || name) {
                 const oldPrefix = currentMerchant.path;
                 const newPrefix = updatedMerchant.path;
+                const oldNamePrefix = currentMerchant.name_path;
+                const newNamePrefix = updatedMerchant.name_path;
 
-                await client.query(
-                    `UPDATE merchants 
-                     SET path = REPLACE(path, $1, $2) 
-                     WHERE path LIKE $3 AND id != $4`,
-                    [oldPrefix, newPrefix, `${oldPrefix}/%`, id]
-                );
+                // Update UUID paths
+                if (oldPrefix !== newPrefix) {
+                    await client.query(
+                        `UPDATE merchants 
+                         SET path = REPLACE(path, $1, $2) 
+                         WHERE path LIKE $3 AND id != $4`,
+                        [oldPrefix, newPrefix, `${oldPrefix}/%`, id]
+                    );
+                }
+
+                // Update Name paths
+                if (oldNamePrefix !== newNamePrefix) {
+                    await client.query(
+                        `UPDATE merchants 
+                         SET name_path = REGEXP_REPLACE(name_path, '^' || $1, $2) 
+                         WHERE path LIKE $3 AND id != $4`,
+                        [oldNamePrefix, newNamePrefix, `${newPrefix}/%`, id]
+                    );
+                }
             }
 
             await client.query("COMMIT");
