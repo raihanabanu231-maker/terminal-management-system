@@ -4,6 +4,20 @@ exports.createTenant = async (req, res) => {
   const { name } = req.body;
 
   try {
+    // --- ADDED: UNIQUE NAME CHECK ---
+    const duplicateRes = await pool.query(
+      "SELECT id FROM tenants WHERE name = $1",
+      [name]
+    );
+
+    if (duplicateRes.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `A Tenant company with the exact name '${name}' already exists.`
+      });
+    }
+    // --- END UNIQUE CHECK ---
+
     const result = await pool.query(
       "INSERT INTO tenants (name) VALUES ($1) RETURNING *",
       [name]

@@ -18,6 +18,28 @@ exports.createMerchant = async (req, res) => {
     }
 
     try {
+        // --- ADDED: UNIQUE NAME CHECK ---
+        // Ensure no other merchant exists with the exact same name under the SAME parent in this tenant
+        const duplicateCheckQuery = parent_id
+            ? "SELECT id FROM merchants WHERE name = $1 AND tenant_id = $2 AND parent_id = $3"
+            : "SELECT id FROM merchants WHERE name = $1 AND tenant_id = $2 AND parent_id IS NULL";
+
+        const queryParams = parent_id
+            ? [name, finalTenantId, parent_id]
+            : [name, finalTenantId];
+
+        const duplicateRes = await pool.query(duplicateCheckQuery, queryParams);
+
+        if (duplicateRes.rows.length > 0) {
+            return res.status(400).json({
+                success: false,
+                message: parent_id
+                    ? `A branch named '${name}' already exists inside this Region.`
+                    : `A top-level Region named '${name}' already exists for this Tenant.`
+            });
+        }
+        // --- END UNIQUE CHECK ---
+
         const newId = crypto.randomUUID();
         let path = `${newId}.`;
 
