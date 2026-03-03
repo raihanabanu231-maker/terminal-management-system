@@ -41,7 +41,7 @@ exports.createMerchant = async (req, res) => {
         // --- END UNIQUE CHECK ---
 
         const newId = crypto.randomUUID();
-        let path = `${newId}.`;
+        let path = `${newId}`;
 
         if (parent_id) {
             const parentRes = await pool.query("SELECT tenant_id, path FROM merchants WHERE id = $1", [parent_id]);
@@ -51,7 +51,7 @@ exports.createMerchant = async (req, res) => {
             if (parentRes.rows[0].tenant_id !== finalTenantId) {
                 return res.status(400).json({ success: false, message: "Parent merchant belongs to a different tenant" });
             }
-            path = `${parentRes.rows[0].path}${newId}.`;
+            path = `${parentRes.rows[0].path}/${newId}`;
         }
 
         // Check Merchant Admin scoping
@@ -144,6 +144,91 @@ exports.getMerchants = async (req, res) => {
         res.json({ success: true, count: result.rows.length, data: hierarchyData });
     } catch (error) {
         console.error("GetMerchants ERROR:", error);
+        res.status(500).json({ message: "Server error", detail: error.message });
+    }
+};
+
+// Update an existing Merchant (e.g. moving it to a new region or renaming)
+exports.updateMerchant = async (req, res) => {
+    const { id } = req.params;
+    const { name, parent_id, external_id } = req.body;
+    const finalTenantId = req.user.role === "SUPER_ADMIN" ? req.body.tenant_id || req.user.tenant_id : req.user.tenant_id;
+
+    try {
+        const currentRes = await pool.query("SELECT * FROM merchants WHERE id = $1", [id]);
+        if (currentRes.rows.length === 0) return res.status(404).json({ success: false, message: "Merchant not found" });
+
+        const currentMerchant = currentRes.rows[0];
+
+        // Ensure cross-tenant modification doesn't happen
+        if (currentMerchant.tenant_id !== finalTenantId && req.user.role !== "SUPER_ADMIN") {
+            return res.status(403).json({ success: false, message: "Unauthorized tenant scope" });
+        }
+
+        // Scope check for regular MERCHANT_ADMIN
+        const merchantRole = req.user.roles?.find(r => r.scope === 'merchant');
+        if (merchantRole && !currentMerchant.path.includes(merchantRole.scope_id)) {
+            return res.status(403).json({ success: false, message: "Unauthorized merchant scope" });
+        }
+
+        // Prevent circular loops (can't make a merchant a child of itself or its own children)
+        if (parent_id) {
+            if (parent_id === id) return res.status(400).json({ success: false, message: "Cannot set merchant as its own parent" });
+            const parentRes = await pool.query("SELECT path FROM merchants WHERE id = $1", [parent_id]);
+            if (parentRes.rows.length === 0) return res.status(404).json({ success: false, message: "Parent not found" });
+
+            const newParentPath = parentRes.rows[0].path;
+            if (newParentPath.includes(id)) {
+                return res.status(400).json({ success: false, message: "Circular hierarchy loop detected: Parent cannot be inside the current merchant's child tree." });
+            }
+
+            // Scope check on target parent
+            if (merchantRole && !newParentPath.includes(merchantRole.scope_id)) {
+                return res.status(403).json({ success: false, message: "Cannot move store outside of your authorized merchant scope." });
+            }
+        }
+
+        const client = await pool.connect();
+        try {
+            await client.query("BEGIN");
+
+            // Apply straightforward updates (DB trigger automatically updates `path` for the moved merchant)
+            const updateRes = await client.query(
+                `UPDATE merchants 
+                 SET name = COALESCE($1, name), 
+                     parent_id = $2, 
+                     external_id = COALESCE($3, external_id) 
+                 WHERE id = $4 
+                 RETURNING *`,
+                [name || null, parent_id !== undefined ? parent_id : currentMerchant.parent_id, external_id || null, id]
+            );
+
+            const updatedMerchant = updateRes.rows[0];
+
+            // If the parent changed, we must recursively fix the paths of ALL child merchants beneath it
+            if (parent_id !== undefined && parent_id !== currentMerchant.parent_id) {
+                const oldPrefix = currentMerchant.path;
+                const newPrefix = updatedMerchant.path;
+
+                await client.query(
+                    `UPDATE merchants 
+                     SET path = REPLACE(path, $1, $2) 
+                     WHERE path LIKE $3 AND id != $4`,
+                    [oldPrefix, newPrefix, `${oldPrefix}/%`, id]
+                );
+            }
+
+            await client.query("COMMIT");
+            res.json({ success: true, message: "Merchant updated successfully", data: updatedMerchant });
+        } catch (txnErr) {
+            await client.query("ROLLBACK");
+            throw txnErr;
+        } finally {
+            client.release();
+        }
+
+    } catch (error) {
+        console.error("UpdateMerchant ERROR:", error);
         res.status(500).json({ message: "Server error", detail: error.message });
     }
 };
