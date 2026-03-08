@@ -270,3 +270,40 @@ exports.updateMerchant = async (req, res) => {
         res.status(500).json({ message: "Server error", detail: error.message });
     }
 };
+
+// Delete a Merchant (⚠️ This will cascade and delete all nested child locations)
+exports.deleteMerchant = async (req, res) => {
+    const { id } = req.params;
+    const finalTenantId = req.user.role === "SUPER_ADMIN" ? req.body.tenant_id || req.user.tenant_id : req.user.tenant_id;
+
+    try {
+        const currentRes = await pool.query("SELECT * FROM merchants WHERE id = $1", [id]);
+        if (currentRes.rows.length === 0) return res.status(404).json({ success: false, message: "Merchant not found" });
+
+        const currentMerchant = currentRes.rows[0];
+
+        // Ensure cross-tenant modification doesn't happen
+        if (currentMerchant.tenant_id !== finalTenantId && req.user.role !== "SUPER_ADMIN") {
+            return res.status(403).json({ success: false, message: "Unauthorized tenant scope" });
+        }
+
+        // Scope check for regular MERCHANT_ADMIN
+        const merchantRole = req.user.roles?.find(r => r.scope === 'merchant');
+        if (merchantRole && !currentMerchant.path.includes(merchantRole.scope_id)) {
+            return res.status(403).json({ success: false, message: "Unauthorized merchant scope" });
+        }
+
+        // Prevent users from deleting their own administrative root node
+        if (merchantRole && currentMerchant.id === merchantRole.scope_id) {
+            return res.status(403).json({ success: false, message: "Access Denied: You cannot delete the root Merchant of your own administrative scope." });
+        }
+
+        // The PostgreSQL DB has "ON DELETE CASCADE", so deleting this will automatically delete all child stores!
+        await pool.query("DELETE FROM merchants WHERE id = $1", [id]);
+
+        res.json({ success: true, message: "Merchant and all child locations deleted successfully" });
+    } catch (error) {
+        console.error("DeleteMerchant ERROR:", error);
+        res.status(500).json({ message: "Server error", detail: error.message });
+    }
+};

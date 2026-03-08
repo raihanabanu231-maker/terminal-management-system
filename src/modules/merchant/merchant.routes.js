@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { createMerchant, getMerchants, updateMerchant } = require("./merchant.controller");
+const { createMerchant, getMerchants, updateMerchant, deleteMerchant } = require("./merchant.controller");
 const { verifyToken } = require("../../middleware/auth.middleware");
 const { authorizeRoles } = require("../../middleware/role.middleware");
 
@@ -29,6 +29,14 @@ router.put(
     verifyToken,
     authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "MERCHANT_ADMIN"),
     updateMerchant
+);
+
+// Delete Merchant
+router.delete(
+    "/:id",
+    verifyToken,
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "MERCHANT_ADMIN"),
+    deleteMerchant
 );
 
 module.exports = router;
