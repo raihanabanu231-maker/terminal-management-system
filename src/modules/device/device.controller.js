@@ -247,6 +247,47 @@ exports.getDevices = async (req, res) => {
     }
 };
 
+// 5. Receive Device Heartbeat (Telemetry Ping)
+exports.receiveHeartbeat = async (req, res) => {
+    // Note: This endpoint is protected by authorizeRoles("DEVICE"), which means
+    // req.user.id is securely populated from the device's JWT token, NOT the request body.
+    const deviceId = req.user.id;
+    const { battery_level, app_version, network_type, metadata } = req.body;
+
+    try {
+        const client = await pool.connect();
+        try {
+            await client.query("BEGIN");
+
+            // 1. Insert the exact telemetry ping into the audit/heartbeat table
+            await client.query(
+                `INSERT INTO device_heartbeats (device_id, battery_level, app_version, network_type, metadata)
+                 VALUES ($1, $2, $3, $4, $5)`,
+                [deviceId, battery_level || null, app_version || null, network_type || null, metadata || {}]
+            );
+
+            // 2. Update the parent device record to mark it as currently "Online"
+            await client.query(
+                `UPDATE devices SET last_seen = NOW() WHERE id = $1`,
+                [deviceId]
+            );
+
+            await client.query("COMMIT");
+            res.json({ success: true, message: "Heartbeat acknowledged" });
+
+        } catch (txnError) {
+            await client.query("ROLLBACK");
+            throw txnError;
+        } finally {
+            client.release();
+        }
+
+    } catch (error) {
+        console.error("HEARTBEAT ERROR:", error);
+        res.status(500).json({ success: false, message: "Server error", detail: error.message });
+    }
+};
+
 // 6. Status Normalization Job (Week 2 logic)
 // This runs in the background and marks devices as OFFLINE if silent for > 5 mins
 exports.startStatusJob = () => {

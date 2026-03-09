@@ -288,6 +288,19 @@ async function initDB() {
       );
     `);
 
+    // 18.5 Device Heartbeats
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS device_heartbeats (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        battery_level INTEGER,
+        app_version TEXT,
+        network_type TEXT,
+        metadata JSONB NOT NULL DEFAULT '{}',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
     // 19. Audit Logs
     await client.query(`
       CREATE TABLE IF NOT EXISTS audit_logs (
