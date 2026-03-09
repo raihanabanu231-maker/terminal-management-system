@@ -35,11 +35,11 @@ exports.generateEnrollmentToken = async (req, res) => {
 
         // In the new schema, we store the hash of the enrollment token for security
         await pool.query(
-            `INSERT INTO devices (serial, model, enrollment_token, enrollment_token_expires, merchant_id, tenant_id, status)
-             VALUES ($1, $2, $3, $4, $5, $6, 'pending_onboard')
+            `INSERT INTO devices (serial, model, enrollment_token, merchant_id, tenant_id, status)
+             VALUES ($1, $2, $3, $4, $5, 'pending_onboard')
              ON CONFLICT (serial) 
-             DO UPDATE SET enrollment_token = $3, enrollment_token_expires = $4, status = 'pending_onboard'`,
-            [serial, model || 'Standard', tokenHash, expiresAt, merchant_id || null, finalTenantId]
+             DO UPDATE SET enrollment_token = $3, status = 'pending_onboard'`,
+            [serial, model || 'Standard', tokenHash, merchant_id || null, finalTenantId]
         );
 
         const qrData = JSON.stringify({ token: token, tenant_id: finalTenantId, serial: serial });
@@ -74,10 +74,6 @@ exports.enrollDevice = async (req, res) => {
         }
 
         const device = result.rows[0];
-
-        if (new Date() > new Date(device.enrollment_token_expires)) {
-            return res.status(400).json({ success: false, message: "Token expired" });
-        }
 
         const jwt = require("jsonwebtoken");
         const deviceToken = jwt.sign(
