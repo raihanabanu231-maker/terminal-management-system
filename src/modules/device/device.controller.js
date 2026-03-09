@@ -135,8 +135,8 @@ exports.sendDeviceCommand = async (req, res) => {
         const device = deviceRes.rows[0];
 
         const cmdRes = await pool.query(
-            `INSERT INTO commands (device_id, type, payload, status, created_by)
-             VALUES ($1, $2, $3, 'queued', $4)
+            `INSERT INTO commands (device_id, type, payload, status, created_by, expires_at)
+             VALUES ($1, $2, $3, 'queued', $4, NOW() + INTERVAL '24 hours')
              RETURNING id`,
             [deviceId, type, payload || {}, req.user.id]
         );
@@ -210,14 +210,32 @@ exports.ackCommand = async (req, res) => {
             return res.status(404).json({ success: false, message: "Command not found or unauthorized" });
         }
 
-        const newStatus = success ? 'completed' : 'failed';
+        const cmd = cmdRes.rows[0];
 
-        await pool.query(
-            `UPDATE commands 
-             SET status = $1, acked_at = NOW(), payload = payload || $2::jsonb 
-             WHERE id = $3`,
-            [newStatus, JSON.stringify({ result_data, error_message }), commandId]
-        );
+        if (success) {
+            await pool.query(
+                `UPDATE commands 
+                 SET status = 'completed', acked_at = NOW(), payload = payload || $1::jsonb 
+                 WHERE id = $2`,
+                [JSON.stringify({ result_data }), commandId]
+            );
+        } else {
+            if (cmd.retry_count < cmd.max_retries) {
+                await pool.query(
+                    `UPDATE commands 
+                     SET status = 'queued', retry_count = retry_count + 1, payload = payload || $1::jsonb 
+                     WHERE id = $2`,
+                    [JSON.stringify({ last_error_message: error_message }), commandId]
+                );
+            } else {
+                await pool.query(
+                    `UPDATE commands 
+                     SET status = 'failed', acked_at = NOW(), payload = payload || $1::jsonb 
+                     WHERE id = $2`,
+                    [JSON.stringify({ result_data, error_message, final_failure: true }), commandId]
+                );
+            }
+        }
 
         res.json({ success: true, message: "Command acknowledged successfully" });
 
@@ -346,4 +364,19 @@ exports.startCleanupJob = () => {
             console.error("Cleanup Job Error:", error);
         }
     }, 24 * 60 * 60 * 1000); // Run once every 24 hours
+};
+
+// 7. Command Expiry Job (Week 2 logic)
+// Cleans up stuck commands that have exceeded their 24hr expiration window
+exports.startExpiryJob = () => {
+    setInterval(async () => {
+        try {
+            const res = await pool.query("UPDATE commands SET status = 'expired' WHERE status = 'queued' AND expires_at < NOW() RETURNING id");
+            if (res.rowCount > 0) {
+                console.log(`⏳ Expired ${res.rowCount} stale device commands.`);
+            }
+        } catch (error) {
+            console.error("Expiry Job Error:", error);
+        }
+    }, 10 * 60 * 1000); // Check every 10 minutes
 };
