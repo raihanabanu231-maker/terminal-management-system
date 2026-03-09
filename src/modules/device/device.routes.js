@@ -5,6 +5,7 @@ const {
     enrollDevice,
     sendDeviceCommand,
     getPendingCommands,
+    ackCommand,
     getDevices
 } = require("./device.controller");
 const {
@@ -50,6 +51,13 @@ router.get(
     "/pending",
     verifyToken,
     getPendingCommands
+);
+
+// Device ACK: Confirm Command Execution (Protected - called by device)
+router.post(
+    "/:commandId/ack",
+    verifyToken,
+    ackCommand
 );
 
 // 🚨 Incidents & Telemetry (Week 3)

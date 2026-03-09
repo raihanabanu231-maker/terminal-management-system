@@ -194,6 +194,39 @@ exports.getPendingCommands = async (req, res) => {
     }
 };
 
+// 4.5. Device Command ACK (Device confirms it executed the command)
+exports.ackCommand = async (req, res) => {
+    const { commandId } = req.params;
+    const { success, error_message, result_data } = req.body;
+    const deviceId = req.user.id; // User is the DEVICE itself in this context
+
+    try {
+        const cmdRes = await pool.query(
+            "SELECT * FROM commands WHERE id = $1 AND device_id = $2",
+            [commandId, deviceId]
+        );
+
+        if (cmdRes.rows.length === 0) {
+            return res.status(404).json({ success: false, message: "Command not found or unauthorized" });
+        }
+
+        const newStatus = success ? 'completed' : 'failed';
+
+        await pool.query(
+            `UPDATE commands 
+             SET status = $1, acked_at = NOW(), payload = payload || $2::jsonb 
+             WHERE id = $3`,
+            [newStatus, JSON.stringify({ result_data, error_message }), commandId]
+        );
+
+        res.json({ success: true, message: "Command acknowledged successfully" });
+
+    } catch (error) {
+        console.error("ACK ERROR:", error);
+        res.status(500).json({ success: false, message: "Server error", detail: error.message });
+    }
+};
+
 // 5. Get All Devices (For Dashboard/List)
 exports.getDevices = async (req, res) => {
     const { merchant_id, tenant_id } = req.query;
