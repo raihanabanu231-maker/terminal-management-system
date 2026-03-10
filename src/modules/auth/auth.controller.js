@@ -355,13 +355,14 @@ exports.getInviteDetails = async (req, res) => {
 
     console.log(`🔍 Handshake_Trace: TokenPrefix=[${cleanToken.substring(0, 5)}...] Length=${cleanToken.length} Hash=[${tokenHash}]`);
 
-    // 1. Fetch Invite and Join with Roles and Tenants
+    // 1. Fetch Invite and Join with Roles, Tenants, and Merchants
     // Use '=' instead of 'ILIKE' for precise hash matching
     const result = await pool.query(
-      `SELECT ui.*, r.name as role_name, t.name as company_name
+      `SELECT ui.*, r.name as role_name, t.name as company_name, m.name as merchant_name
        FROM user_invitations ui
        LEFT JOIN roles r ON ui.role_id = r.id
        LEFT JOIN tenants t ON ui.tenant_id = t.id
+       LEFT JOIN merchants m ON ui.merchant_id = m.id
        WHERE ui.token_hash = $1`,
       [tokenHash]
     );
@@ -390,7 +391,7 @@ exports.getInviteDetails = async (req, res) => {
       success: true,
       data: {
         email: invite.email,
-        company_name: invite.company_name || "Our Company",
+        company_name: invite.merchant_name || invite.company_name || "Our Company",
         role: invite.role_name || "Member"
       }
     });
