@@ -160,17 +160,25 @@ exports.getMerchants = async (req, res) => {
 
         const hierarchyData = buildHierarchy(result.rows);
 
-        // Fetch Tenant Name even if no merchants exist
-        let tenantName = result.rows.length > 0 ? result.rows[0].tenant_name : null;
-        if (!tenantName && (finalTenantId || req.user.tenant_id)) {
+        // Identify the proper "Root Name" for the Parent Organization dropdown
+        let rootName = null;
+        const merchantRole = req.user.roles?.find(r => r.scope === 'merchant');
+        
+        if (merchantRole) {
+            // For scoped users, the "Root" of their world is their assigned Merchant
+            // We find it in the result set (it will be the one whose ID matches their scope_id)
+            const rootMerchant = result.rows.find(m => m.id === merchantRole.scope_id);
+            rootName = rootMerchant ? rootMerchant.name : "Your Branch";
+        } else if (finalTenantId || req.user.tenant_id) {
+            // For global admins, the Root is the Company (Tenant)
             const tRes = await pool.query("SELECT name FROM tenants WHERE id = $1", [finalTenantId || req.user.tenant_id]);
-            tenantName = tRes.rows[0]?.name || "Our Company";
+            rootName = tRes.rows[0]?.name || "Our Company";
         }
 
         res.json({ 
             success: true, 
             count: result.rows.length, 
-            tenant_name: tenantName,
+            root_name: rootName, // Use this for the dropdown label
             data: hierarchyData 
         });
     } catch (error) {
