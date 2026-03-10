@@ -11,7 +11,7 @@ router.get("/debug", verifyToken, (req, res) => res.json({ user: req.user }));
 router.post(
     "/",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "MERCHANT_ADMIN"),
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN"),
     createMerchant
 );
 
@@ -19,7 +19,7 @@ router.post(
 router.get(
     "/",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "MERCHANT_ADMIN"),
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR", "VIEWER"),
     getMerchants
 );
 
@@ -27,7 +27,7 @@ router.get(
 router.put(
     "/:id",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "MERCHANT_ADMIN"),
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN"),
     updateMerchant
 );
 
@@ -35,7 +35,7 @@ router.put(
 router.delete(
     "/:id",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "MERCHANT_ADMIN"),
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN"),
     deleteMerchant
 );
 

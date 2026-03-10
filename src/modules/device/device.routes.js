@@ -16,11 +16,11 @@ const {
 const { verifyToken } = require("../../middleware/auth.middleware");
 const { authorizeRoles } = require("../../middleware/role.middleware");
 
-// Get All Devices (Protected: Super Admin & Tenant Admin)
+// Get All Devices (Protected: Super Admin, Tenant Admin, Operator, Viewer)
 router.get(
     "/",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN"),
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR", "VIEWER"),
     getDevices
 );
 
@@ -28,7 +28,7 @@ router.get(
 router.post(
     "/enroll-token",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "MERCHANT_ADMIN"),
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR"),
     generateEnrollmentToken
 );
 
