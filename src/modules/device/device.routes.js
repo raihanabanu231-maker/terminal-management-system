@@ -24,7 +24,7 @@ router.get(
     getDevices
 );
 
-// Generate Token (Protected: Super, Tenant, and Merchant Admins)
+// Generate Token (Protected: Super, Tenant, and Operators)
 router.post(
     "/enroll-token",
     verifyToken,
