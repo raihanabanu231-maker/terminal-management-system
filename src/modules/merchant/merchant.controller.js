@@ -95,6 +95,10 @@ exports.getMerchants = async (req, res) => {
     const { tenant_id } = req.query;
 
     try {
+        const finalTenantId = (userRole === "SUPER_ADMIN" && tenant_id)
+            ? tenant_id
+            : req.user.tenant_id;
+
         let query = `
             SELECT 
                 m.*, 
@@ -108,13 +112,13 @@ exports.getMerchants = async (req, res) => {
 
         // Hierarchy Filtering Logic
         if (userRole === "SUPER_ADMIN") {
-            if (tenant_id) {
-                params.push(tenant_id);
+            if (finalTenantId) {
+                params.push(finalTenantId);
                 query += ` WHERE m.tenant_id = $${params.length}`;
             }
         } else {
-            // All non-super-admins are locked to their tenant
-            params.push(req.user.tenant_id);
+            // All non-super-admins are locked to their own tenant
+            params.push(finalTenantId);
             query += ` WHERE m.tenant_id = $${params.length}`;
 
             // Check if user has a merchant scope in their JWT
