@@ -138,6 +138,9 @@ exports.getMerchants = async (req, res) => {
                     map[merchant.parent_id].children.push(map[merchant.id]);
                 } else {
                     // No parent_id or parent not found in current scope, treat as a root
+                    // We nullify the parent_id for the JSON response so the frontend 
+                    // doesn't see a private UUID they can't resolve.
+                    map[merchant.id].parent_id = null;
                     roots.push(map[merchant.id]);
                 }
             });
