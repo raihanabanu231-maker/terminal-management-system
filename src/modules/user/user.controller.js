@@ -127,7 +127,10 @@ exports.inviteUser = async (req, res) => {
 
     // 5. Fetch Company Name for Email Personalization
     let companyName = "Our Company";
-    if (finalTenantId) {
+    if (merchant_id) {
+      const merchantResult = await pool.query("SELECT name FROM merchants WHERE id = $1", [merchant_id]);
+      companyName = merchantResult.rows[0]?.name || "Our Company";
+    } else if (finalTenantId) {
       const tenantResult = await pool.query("SELECT name FROM tenants WHERE id = $1", [finalTenantId]);
       companyName = tenantResult.rows[0]?.name || "Our Company";
     } else {
