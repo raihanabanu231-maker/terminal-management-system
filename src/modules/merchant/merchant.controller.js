@@ -95,7 +95,15 @@ exports.getMerchants = async (req, res) => {
     const { tenant_id } = req.query;
 
     try {
-        let query = "SELECT m.*, t.name as tenant_name FROM merchants m JOIN tenants t ON m.tenant_id = t.id";
+        let query = `
+            SELECT 
+                m.*, 
+                t.name as tenant_name,
+                p.name as parent_name
+            FROM merchants m 
+            JOIN tenants t ON m.tenant_id = t.id
+            LEFT JOIN merchants p ON m.parent_id = p.id
+        `;
         const params = [];
 
         // Hierarchy Filtering Logic
@@ -137,10 +145,12 @@ exports.getMerchants = async (req, res) => {
                 if (merchant.parent_id && map[merchant.parent_id]) {
                     map[merchant.parent_id].children.push(map[merchant.id]);
                 } else {
-                    // No parent_id or parent not found in current scope, treat as a root
-                    // We nullify the parent_id for the JSON response so the frontend 
-                    // doesn't see a private UUID they can't resolve.
-                    map[merchant.id].parent_id = null;
+                    // This is a root node in the CURRENT SCOPE.
+                    // We keep merchant.parent_name (fetched from DB) so the frontend knows who the real parent is,
+                    // but we nullify the parent_id if the parent is "outside" this user's visible world.
+                    if (merchant.parent_id && !map[merchant.parent_id]) {
+                        map[merchant.id].parent_id = null;
+                    }
                     roots.push(map[merchant.id]);
                 }
             });
