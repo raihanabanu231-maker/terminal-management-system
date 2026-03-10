@@ -160,7 +160,19 @@ exports.getMerchants = async (req, res) => {
 
         const hierarchyData = buildHierarchy(result.rows);
 
-        res.json({ success: true, count: result.rows.length, data: hierarchyData });
+        // Fetch Tenant Name even if no merchants exist
+        let tenantName = result.rows.length > 0 ? result.rows[0].tenant_name : null;
+        if (!tenantName && (finalTenantId || req.user.tenant_id)) {
+            const tRes = await pool.query("SELECT name FROM tenants WHERE id = $1", [finalTenantId || req.user.tenant_id]);
+            tenantName = tRes.rows[0]?.name || "Our Company";
+        }
+
+        res.json({ 
+            success: true, 
+            count: result.rows.length, 
+            tenant_name: tenantName,
+            data: hierarchyData 
+        });
     } catch (error) {
         console.error("GetMerchants ERROR:", error);
         res.status(500).json({ message: "Server error", detail: error.message });
