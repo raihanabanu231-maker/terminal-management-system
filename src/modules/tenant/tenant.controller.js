@@ -55,3 +55,30 @@ exports.getTenants = async (req, res) => {
     });
   }
 };
+
+exports.getMyTenant = async (req, res) => {
+  try {
+    const tenantId = req.user.tenant_id;
+    if (!tenantId) {
+      return res.status(400).json({ success: false, message: "No tenant associated with this user" });
+    }
+
+    const result = await pool.query("SELECT id, name, created_at FROM tenants WHERE id = $1", [tenantId]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Company not found" });
+    }
+
+    res.json({
+      success: true,
+      data: result.rows[0]
+    });
+  } catch (error) {
+    console.error("GetMyTenant ERROR:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      detail: error.message
+    });
+  }
+};
