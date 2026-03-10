@@ -20,7 +20,7 @@ exports.sendInviteEmail = async (toEmail, inviteLink, details = {}) => {
           <h2 style="color: #4CAF50;">Welcome to TMS!</h2>
           <p>Hello,</p>
           <p>You have been invited to join <strong>${companyName || 'our platform'}</strong> as a <strong>${roleName || 'Team Member'}</strong>.</p>
-          <p>The Tenant Management System (TMS) allows you to manage merchants, devices, and operations seamlessly.</p>
+          <p>The Terminal Management System (TMS) allows you to manage merchants, devices, and operations seamlessly.</p>
           
           <div style="text-align: center; margin: 30px 0;">
             <a href="${inviteLink}" 
@@ -31,7 +31,7 @@ exports.sendInviteEmail = async (toEmail, inviteLink, details = {}) => {
 
           <p>This link will expire in 72 hours. If you did not expect this invitation, please ignore this email.</p>
           <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
-          <p style="font-size: 12px; color: #777;">Sent securely by the TMS Automated System.</p>
+          <p style="font-size: 12px; color: #777;">Sent securely by the Terminal Management System.</p>
         </div>
       `;
     sendSmtpEmail.sender = { name: "TMS Admin", email: process.env.SENDER_EMAIL };
