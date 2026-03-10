@@ -42,7 +42,11 @@ exports.createMerchant = async (req, res) => {
 
         const newId = crypto.randomUUID();
         let path = `${newId}`;
-        let name_path = `${name}`;
+        
+        // Fetch Tenant Name to prepend to name_path
+        const tenantRes = await pool.query("SELECT name FROM tenants WHERE id = $1", [finalTenantId]);
+        const tenantName = tenantRes.rows.length > 0 ? tenantRes.rows[0].name : "Unknown Tenant";
+        let name_path = `${tenantName}/${name}`;
 
         if (parent_id) {
             const parentRes = await pool.query("SELECT tenant_id, path, name_path FROM merchants WHERE id = $1", [parent_id]);
