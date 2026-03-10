@@ -179,11 +179,26 @@ exports.getMerchants = async (req, res) => {
             rootName = tRes.rows[0]?.name || "Our Company";
         }
 
+        let finalTree = hierarchyData;
+
+        // If user is a Global Admin, we wrap the entire branch list in a "Company Name" root node
+        // so they can explicitly see the Company in their tree/dropdown.
+        if (!merchantRole) {
+            finalTree = [
+                {
+                    id: null, // Global parent is the company
+                    name: rootName,
+                    is_organization_root: true,
+                    children: hierarchyData
+                }
+            ];
+        }
+
         res.json({ 
             success: true, 
             count: result.rows.length, 
-            root_name: rootName, // Use this for the dropdown label
-            data: hierarchyData 
+            root_name: rootName, 
+            data: finalTree 
         });
     } catch (error) {
         console.error("GetMerchants ERROR:", error);
