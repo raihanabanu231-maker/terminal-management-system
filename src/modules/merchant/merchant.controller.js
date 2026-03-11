@@ -67,18 +67,53 @@ exports.createMerchant = async (req, res) => {
             name_path = parentRes.rows[0].name_path ? `${parentRes.rows[0].name_path}/${name}` : `${name}`;
         }
 
-        // Check Security Scoping
+        // --- SECURITY PERMISSIONS CHECK ---
         const merchantRole = req.user.roles?.find(r => r.scope === 'merchant');
         const isTenantAdmin = req.user.role === 'TENANT_ADMIN' || req.user.roles?.some(r => r.name === 'Tenant Admin' || r.name === 'TENANT_ADMIN');
 
-        if (req.user.role !== 'SUPER_ADMIN' && !isTenantAdmin) {
-            // This user is likely an OPERATOR
+        // Level 1: Super Admin -> No Restrictions
+        if (req.user.role === 'SUPER_ADMIN') {
+            // Full Access
+        } 
+        // Level 2: Tenant Admin -> Can create anywhere in their Tenant
+        else if (isTenantAdmin) {
+            // Full Access within Tenant
+        }
+        // Level 3: Branch Admin / Merchant-Scoped -> RESTRICTED
+        else if (merchantRole) {
+            // A branch admin MUST provide a parent_id (they cannot create top-level/root branches)
             if (!internalParentId) {
-                return res.status(403).json({ success: false, message: "Operators and Viewers cannot create top-level branches." });
+                return res.status(403).json({ 
+                    success: false, 
+                    message: "Permission Denied: Branch-level admins can only create sub-branches, not new top-level organizations." 
+                });
             }
-            if (merchantRole && !path.includes(merchantRole.scope_id)) {
-                return res.status(403).json({ success: false, message: "You can only create stores under your own authorized merchant scope." });
+
+            // The branch admin can ONLY create under their own authorized scope
+            // We check if the 'path' of the parent they provided contains their own scope_id
+            const userScopeId = merchantRole.scope_id;
+            
+            // Re-fetch parent info for the explicit scope check (just to be 100% safe)
+            const parentCheck = await pool.query("SELECT id, path FROM merchants WHERE id = $1", [internalParentId]);
+            if (parentCheck.rows.length === 0) {
+                 return res.status(404).json({ success: false, message: "Parent branch not found" });
             }
+
+            const parentPath = parentCheck.rows[0].path;
+            
+            // Check if the parent is my own branch or a grandchild of my branch
+            const isWithinMyScope = parentPath.split('/').includes(userScopeId);
+
+            if (!isWithinMyScope) {
+                return res.status(403).json({ 
+                    success: false, 
+                    message: "Security Violation: You are not authorized to create branches outside of your own hierarchy scope." 
+                });
+            }
+        } 
+        // Other (Viewer, etc.)
+        else {
+            return res.status(403).json({ success: false, message: "Unauthorized: You do not have permission to create merchants." });
         }
 
         const result = await pool.query(
