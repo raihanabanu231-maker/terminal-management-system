@@ -9,6 +9,9 @@ exports.inviteUser = async (req, res) => {
   console.log("📥 Invite Request Body:", req.body);
   const { email, role_name, tenant_id, merchant_id } = req.body;
 
+  const merchantRole = req.user.roles?.find(r => r.scope === 'merchant');
+  const isTenantAdmin = req.user.role === 'TENANT_ADMIN' || req.user.roles?.some(r => r.name === 'Tenant Admin' || r.name === 'TENANT_ADMIN');
+
   try {
     if (!email || !role_name) {
       console.log("❌ Validation Failed: email or role_name missing in body");
@@ -80,6 +83,27 @@ exports.inviteUser = async (req, res) => {
     const roleId = roleResult.rows[0].id;
     const normalizedRoleName = roleResult.rows[0].name;
 
+    // 🎯 NEW: TC-INV-05 — Role Hierarchy Protection
+    if (req.user.role !== 'SUPER_ADMIN') {
+        const higherRoles = ['SUPER_ADMIN', 'Super Admin'];
+        if (higherRoles.includes(normalizedRoleName)) {
+            return res.status(403).json({ 
+                success: false, 
+                message: "Permission Denied: You cannot invite users to a 'Super Admin' role. This action is restricted to system-wide owners." 
+            });
+        }
+    }
+
+    // Branch Admins cannot invite Tenant Admins
+    if (req.user.role !== 'SUPER_ADMIN' && !isTenantAdmin) {
+        if (normalizedRoleName.toLowerCase().includes('tenant admin')) {
+            return res.status(403).json({ 
+                success: false, 
+                message: "Security Restriction: Branch-level admins cannot grant Company-wide (Tenant Admin) authority." 
+            });
+        }
+    }
+
     // 2. Setup Logic
     if (req.user.role === "SUPER_ADMIN" && !tenant_id) {
       return res.status(400).json({
@@ -108,9 +132,6 @@ exports.inviteUser = async (req, res) => {
     const scopeId = merchant_id || finalTenantId;
 
     // --- SECURITY ACCESS CHECK FOR INVITER ---
-    const merchantRole = req.user.roles?.find(r => r.scope === 'merchant');
-    const isTenantAdmin = req.user.role === 'TENANT_ADMIN' || req.user.roles?.some(r => r.name === 'Tenant Admin' || r.name === 'TENANT_ADMIN');
-
     if (req.user.role !== 'SUPER_ADMIN' && !isTenantAdmin) {
         // This is a Branch Admin (Merchant Scoped)
         if (!merchant_id) {
