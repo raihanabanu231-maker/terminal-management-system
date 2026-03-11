@@ -304,6 +304,11 @@ exports.updateMerchant = async (req, res) => {
         try {
             await client.query("BEGIN");
 
+            // --- LOCK THE RECORD FOR THE MOVE ---
+            // This prevents race conditions if two admins try to move the same branch
+            const lockRes = await client.query("SELECT * FROM merchants WHERE id = $1 FOR UPDATE", [id]);
+            if (lockRes.rows.length === 0) throw new Error("Merchant disappeared");
+
             // Build new name_path if name or parent changed
             let calculatedNamePath = currentMerchant.name_path;
             let finalName = name || currentMerchant.name;
@@ -344,23 +349,25 @@ exports.updateMerchant = async (req, res) => {
                 const oldNamePrefix = currentMerchant.name_path;
                 const newNamePrefix = updatedMerchant.name_path;
 
-                // Update UUID paths
+                // --- SAFER ANCHORED REPLACEMENT ---
+                // We use string concatenation to replace ONLY the start of the path
+                // This prevents accidental replacement of UUID substrings
                 if (oldPrefix !== newPrefix) {
                     await client.query(
                         `UPDATE merchants 
-                         SET path = REPLACE(path, $1, $2) 
+                         SET path = $1 || SUBSTRING(path FROM $2) 
                          WHERE path LIKE $3 AND id != $4`,
-                        [oldPrefix, newPrefix, `${oldPrefix}/%`, id]
+                        [newPrefix, oldPrefix.length + 1, `${oldPrefix}/%`, id]
                     );
                 }
 
-                // Update Name paths
+                // Update Name paths (Anchored replacement)
                 if (oldNamePrefix !== newNamePrefix) {
                     await client.query(
                         `UPDATE merchants 
-                         SET name_path = REGEXP_REPLACE(name_path, '^' || $1, $2) 
+                         SET name_path = $1 || SUBSTRING(name_path FROM $2) 
                          WHERE path LIKE $3 AND id != $4`,
-                        [oldNamePrefix, newNamePrefix, `${newPrefix}/%`, id]
+                        [newNamePrefix, oldNamePrefix.length + 1, `${newPrefix}/%`, id]
                     );
                 }
             }
