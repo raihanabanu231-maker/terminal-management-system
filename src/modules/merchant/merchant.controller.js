@@ -227,22 +227,27 @@ exports.getMerchants = async (req, res) => {
 
         const hierarchyData = buildHierarchy(result.rows);
 
-        // Identify the proper "Root Name" for the Parent Organization dropdown
-        let rootName = null;
+        // Identify the proper "Roots" for the dashboard
+        let rawTree = [];
         const merchantRole = req.user.roles?.find(r => r.scope === 'merchant');
-        
+
         if (merchantRole) {
-            const rootMerchant = result.rows.find(m => m.id === merchantRole.scope_id);
-            rootName = rootMerchant ? rootMerchant.name : "Your Branch";
-        } else if (currentTenantId) {
+            // Level 3 Case: User is locked to a specific branch (Branch Admin)
+            rawTree = hierarchyData; 
+        } else if (userRole === "SUPER_ADMIN" && !tenant_id) {
+            // Level 1 Case: Super Admin Global Dashboard (Show ALL Tenants as roots)
+            const allTenantsRes = await pool.query("SELECT id, name FROM tenants ORDER BY name ASC");
+            rawTree = allTenantsRes.rows.map(t => ({
+                id: t.id,
+                name: t.name,
+                parent_id: null,
+                children: hierarchyData.filter(m => m.tenant_id === t.id)
+            }));
+        } else {
+            // Level 2 Case: Tenant Admin or Filtered Super Admin (Show ONE Tenant as root)
             const tRes = await pool.query("SELECT name FROM tenants WHERE id = $1", [currentTenantId]);
-            rootName = tRes.rows[0]?.name || "Our Company";
-        }
-
-        let rawTree = hierarchyData;
-
-        // If user is a Global Admin, we wrap the entire branch list in the actual "Company" root node
-        if (!merchantRole) {
+            const rootName = tRes.rows[0]?.name || "Our Company";
+            
             rawTree = [
                 {
                     id: currentTenantId, 
