@@ -1,6 +1,6 @@
 const jwt = require("jsonwebtoken");
 
-exports.verifyToken = (req, res, next) => {
+exports.verifyToken = async (req, res, next) => {
     const authHeader = req.header("Authorization");
 
     if (!authHeader) {
@@ -15,6 +15,22 @@ exports.verifyToken = (req, res, next) => {
         const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : authHeader;
 
         const verified = jwt.verify(token, process.env.JWT_SECRET);
+        
+        // 🎯 NEW: TC-LOGOUT-02 — Mandatory Session Validity Check
+        // Ensures that if a user logs out, their Access Token is killed immediately.
+        const pool = require("../config/db");
+        const sessionCheck = await pool.query(
+            "SELECT id FROM user_sessions WHERE user_id = $1 AND jti = $2 AND invalidated_at IS NULL",
+            [verified.id, verified.jti]
+        );
+
+        if (sessionCheck.rows.length === 0) {
+            return res.status(401).json({
+                success: false,
+                message: "Session revoked. Please login again.",
+            });
+        }
+
         req.user = verified;
         next();
     } catch (error) {
