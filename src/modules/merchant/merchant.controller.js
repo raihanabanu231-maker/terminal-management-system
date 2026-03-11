@@ -168,13 +168,15 @@ exports.getMerchants = async (req, res) => {
             return roots;
         };
 
-        // Recursively keep only the fields the user requested: id, name, parent_id, children
-        const simplifyTree = (nodes) => {
+        // Recursively keep only the fields the user requested: id, name, parent_id, children, level
+        // AND handle the Level logic (starting from 1 for the first visible node)
+        const simplifyTree = (nodes, currentLevel) => {
             return nodes.map(node => ({
                 id: node.id,
                 name: node.name,
                 parent_id: node.parent_id || null,
-                children: simplifyTree(node.children || [])
+                level: currentLevel,
+                children: simplifyTree(node.children || [], currentLevel + 1)
             }));
         };
 
@@ -198,16 +200,16 @@ exports.getMerchants = async (req, res) => {
         if (!merchantRole) {
             rawTree = [
                 {
-                    id: currentTenantId, // The ACTUAL Company UUID
+                    id: currentTenantId, 
                     name: rootName,
-                    parent_id: null,    // Root of the company has no parent
+                    parent_id: null,
                     children: hierarchyData
                 }
             ];
         }
 
-        // Apply fields simplification to everything
-        const cleanTree = simplifyTree(rawTree);
+        // Apply cleaning AND set start level to 1
+        const cleanTree = simplifyTree(rawTree, 1);
 
         res.json({ 
             success: true, 
