@@ -186,35 +186,22 @@ exports.getMerchants = async (req, res) => {
             const map = {};
             const roots = [];
 
-            // First pass: map all merchants by their ID and initialize empty children array
-            merchants.forEach(merchant => {
-                map[merchant.id] = { ...merchant, children: [] };
+            merchants.forEach(m => {
+                map[m.id] = { ...m, children: [] };
             });
 
-            // Second pass: assign each merchant to its parent's children array
-            merchants.forEach(merchant => {
-                if (merchant.parent_id && map[merchant.parent_id]) {
-                    map[merchant.parent_id].children.push(map[merchant.id]);
+            merchants.forEach(m => {
+                const parent = map[m.parent_id];
+                if (m.parent_id && parent) {
+                    parent.children.push(map[m.id]);
                 } else {
-                    // This is a root node in the CURRENT SCOPE.
-                    // If it's a first-level branch (no real parent_id in DB), 
-                    // we dynamically set parent_id to the tenant_id for the JSON response.
-                    if (!merchant.parent_id) {
-                        map[merchant.id].parent_id = merchant.tenant_id;
-                        map[merchant.id].parent_name = merchant.tenant_name;
-                    } else if (!map[merchant.parent_id]) {
-                        // Parent is outside this user's visible world
-                        map[merchant.id].parent_id = null;
-                    }
-                    roots.push(map[merchant.id]);
+                    roots.push(map[m.id]);
                 }
             });
 
             return roots;
         };
 
-        // Recursively keep only the fields the user requested: id, name, parent_id, children, level
-        // AND handle the Level logic (starting from 1 for the first visible node)
         const simplifyTree = (nodes, currentLevel) => {
             return nodes.map(node => ({
                 id: node.id,
@@ -227,15 +214,14 @@ exports.getMerchants = async (req, res) => {
 
         const hierarchyData = buildHierarchy(result.rows);
 
-        // Identify the proper "Roots" for the dashboard
         let rawTree = [];
         const merchantRole = req.user.roles?.find(r => r.scope === 'merchant');
 
         if (merchantRole) {
-            // Level 3 Case: User is locked to a specific branch (Branch Admin)
+            // Level 3: Scoped to a branch
             rawTree = hierarchyData; 
         } else if (userRole === "SUPER_ADMIN" && !tenant_id) {
-            // Level 1 Case: Super Admin Global Dashboard (Show ALL Tenants as roots)
+            // Level 1: Global Super Admin View
             const allTenantsRes = await pool.query("SELECT id, name FROM tenants ORDER BY name ASC");
             rawTree = allTenantsRes.rows.map(t => ({
                 id: t.id,
@@ -244,7 +230,7 @@ exports.getMerchants = async (req, res) => {
                 children: hierarchyData.filter(m => m.tenant_id === t.id)
             }));
         } else {
-            // Level 2 Case: Tenant Admin or Filtered Super Admin (Show ONE Tenant as root)
+            // Level 2: Tenant Admin View
             const tRes = await pool.query("SELECT name FROM tenants WHERE id = $1", [currentTenantId]);
             const rootName = tRes.rows[0]?.name || "Our Company";
             
@@ -258,7 +244,6 @@ exports.getMerchants = async (req, res) => {
             ];
         }
 
-        // Apply cleaning AND set start level to 1
         const cleanTree = simplifyTree(rawTree, 1);
 
         res.json({ 
