@@ -134,6 +134,8 @@ exports.getMerchants = async (req, res) => {
 
         const result = await pool.query(query, params);
 
+        const currentTenantId = finalTenantId || req.user.tenant_id;
+
         // Convert flat array to nested hierarchy tree
         const buildHierarchy = (merchants) => {
             const map = {};
@@ -150,9 +152,13 @@ exports.getMerchants = async (req, res) => {
                     map[merchant.parent_id].children.push(map[merchant.id]);
                 } else {
                     // This is a root node in the CURRENT SCOPE.
-                    // We keep merchant.parent_name (fetched from DB) so the frontend knows who the real parent is,
-                    // but we nullify the parent_id if the parent is "outside" this user's visible world.
-                    if (merchant.parent_id && !map[merchant.parent_id]) {
+                    // If it's a first-level branch (no real parent_id in DB), 
+                    // we dynamically set parent_id to the tenant_id for the JSON response.
+                    if (!merchant.parent_id) {
+                        map[merchant.id].parent_id = merchant.tenant_id;
+                        map[merchant.id].parent_name = merchant.tenant_name;
+                    } else if (!map[merchant.parent_id]) {
+                        // Parent is outside this user's visible world
                         map[merchant.id].parent_id = null;
                     }
                     roots.push(map[merchant.id]);
@@ -169,24 +175,20 @@ exports.getMerchants = async (req, res) => {
         const merchantRole = req.user.roles?.find(r => r.scope === 'merchant');
         
         if (merchantRole) {
-            // For scoped users, the "Root" of their world is their assigned Merchant
-            // We find it in the result set (it will be the one whose ID matches their scope_id)
             const rootMerchant = result.rows.find(m => m.id === merchantRole.scope_id);
             rootName = rootMerchant ? rootMerchant.name : "Your Branch";
-        } else if (finalTenantId || req.user.tenant_id) {
-            // For global admins, the Root is the Company (Tenant)
-            const tRes = await pool.query("SELECT name FROM tenants WHERE id = $1", [finalTenantId || req.user.tenant_id]);
+        } else if (currentTenantId) {
+            const tRes = await pool.query("SELECT name FROM tenants WHERE id = $1", [currentTenantId]);
             rootName = tRes.rows[0]?.name || "Our Company";
         }
 
         let finalTree = hierarchyData;
 
-        // If user is a Global Admin, we wrap the entire branch list in a "Company Name" root node
-        // so they can explicitly see the Company in their tree/dropdown.
+        // If user is a Global Admin, we wrap the entire branch list in the actual "Company" root node
         if (!merchantRole) {
             finalTree = [
                 {
-                    id: null, // Global parent is the company
+                    id: currentTenantId, // The ACTUAL Company UUID
                     name: rootName,
                     is_organization_root: true,
                     children: hierarchyData
