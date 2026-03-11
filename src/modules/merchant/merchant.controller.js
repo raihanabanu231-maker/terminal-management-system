@@ -168,6 +168,16 @@ exports.getMerchants = async (req, res) => {
             return roots;
         };
 
+        // Recursively keep only the fields the user requested: id, name, parent_id, children
+        const simplifyTree = (nodes) => {
+            return nodes.map(node => ({
+                id: node.id,
+                name: node.name,
+                parent_id: node.parent_id || null,
+                children: simplifyTree(node.children || [])
+            }));
+        };
+
         const hierarchyData = buildHierarchy(result.rows);
 
         // Identify the proper "Root Name" for the Parent Organization dropdown
@@ -182,25 +192,26 @@ exports.getMerchants = async (req, res) => {
             rootName = tRes.rows[0]?.name || "Our Company";
         }
 
-        let finalTree = hierarchyData;
+        let rawTree = hierarchyData;
 
         // If user is a Global Admin, we wrap the entire branch list in the actual "Company" root node
         if (!merchantRole) {
-            finalTree = [
+            rawTree = [
                 {
                     id: currentTenantId, // The ACTUAL Company UUID
                     name: rootName,
-                    is_organization_root: true,
+                    parent_id: null,    // Root of the company has no parent
                     children: hierarchyData
                 }
             ];
         }
 
+        // Apply fields simplification to everything
+        const cleanTree = simplifyTree(rawTree);
+
         res.json({ 
             success: true, 
-            count: result.rows.length, 
-            root_name: rootName, 
-            data: finalTree 
+            data: cleanTree 
         });
     } catch (error) {
         console.error("GetMerchants ERROR:", error);
