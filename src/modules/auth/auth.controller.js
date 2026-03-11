@@ -391,7 +391,9 @@ exports.getInviteDetails = async (req, res) => {
       success: true,
       data: {
         email: invite.email,
-        company_name: invite.merchant_name || invite.company_name || "Our Company",
+        company_name: invite.company_name || "Our Company",
+        merchant_name: invite.merchant_name || null,
+        organization_name: invite.merchant_name || invite.company_name || "Our Company",
         role: invite.role_name || "Member"
       }
     });
