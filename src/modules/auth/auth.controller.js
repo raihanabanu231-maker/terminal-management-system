@@ -211,6 +211,15 @@ exports.registerWithInvite = async (req, res) => {
   const { password, first_name, last_name, mobile } = req.body;
   const token = req.body.token || req.query.token;
 
+  // 🎯 NEW: TC-REG-05 — Missing Required Fields Check
+  if (!first_name || !last_name || !mobile || !password) {
+      console.log("❌ Registration Failed: One or more mandatory fields are missing.");
+      return res.status(400).json({ 
+          success: false, 
+          message: "All fields are required (First Name, Last Name, Mobile, and Password). Please complete the form." 
+      });
+  }
+
   try {
     if (!token) {
       console.log("❌ Registration Failed: No token provided in body or query");
