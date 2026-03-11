@@ -15,6 +15,15 @@ exports.inviteUser = async (req, res) => {
       return res.status(400).json({ success: false, message: "Email and Role are required" });
     }
 
+    // 🎯 NEW: TC-INV-04 — Invalid Email Format Check
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+        return res.status(400).json({ 
+            success: false, 
+            message: "Invalid email format. Please provide a valid email address (e.g., user@example.com)." 
+        });
+    }
+
     // --- DUPLICATE PREVENTION LOGIC ---
     // A. Check if user already exists
     const userExists = await pool.query("SELECT id FROM users WHERE email = $1", [email]);
