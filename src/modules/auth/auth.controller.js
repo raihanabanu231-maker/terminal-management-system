@@ -356,13 +356,13 @@ exports.getInviteDetails = async (req, res) => {
     console.log(`🔍 Handshake_Trace: TokenPrefix=[${cleanToken.substring(0, 5)}...] Length=${cleanToken.length} Hash=[${tokenHash}]`);
 
     // 1. Fetch Invite and Join with Roles, Tenants, and Merchants
-    // Use '=' instead of 'ILIKE' for precise hash matching
+    // We check both merchant_id AND scope_id to be extra safe
     const result = await pool.query(
-      `SELECT ui.*, r.name as role_name, t.name as company_name, m.name as merchant_name
+      `SELECT ui.*, r.name as role_name, t.name as tenant_name, m.name as merchant_name
        FROM user_invitations ui
        LEFT JOIN roles r ON ui.role_id = r.id
        LEFT JOIN tenants t ON ui.tenant_id = t.id
-       LEFT JOIN merchants m ON ui.merchant_id = m.id
+       LEFT JOIN merchants m ON (ui.merchant_id = m.id OR (ui.scope_type = 'merchant' AND ui.scope_id = m.id))
        WHERE ui.token_hash = $1`,
       [tokenHash]
     );
@@ -391,10 +391,10 @@ exports.getInviteDetails = async (req, res) => {
       success: true,
       data: {
         email: invite.email,
-        // If invited to a branch, show that branch name AS the Company Name
-        company_name: invite.merchant_name || invite.company_name || "Our Company",
+        // FORCE: If this is a merchant-level invite, merchant_name MUST be the company_name shown to user
+        company_name: invite.merchant_name || invite.tenant_name || "Our Company",
         merchant_name: invite.merchant_name || null,
-        root_tenant_name: invite.company_name || "Our Company",
+        root_tenant_name: invite.tenant_name || "Our Company",
         role: invite.role_name || "Member"
       }
     });
