@@ -140,8 +140,10 @@ exports.getMerchants = async (req, res) => {
     const { tenant_id } = req.query;
 
     try {
-        const finalTenantId = (userRole === "SUPER_ADMIN" && tenant_id)
-            ? tenant_id
+        // For Super Admin, if no tenant_id is provided in the query, we want to fetch EVERYTHING.
+        // For others, we lock them to their own tenant_id from the token.
+        const filterTenantId = (userRole === "SUPER_ADMIN") 
+            ? tenant_id 
             : req.user.tenant_id;
 
         let query = `
@@ -157,13 +159,13 @@ exports.getMerchants = async (req, res) => {
 
         // Hierarchy Filtering Logic
         if (userRole === "SUPER_ADMIN") {
-            if (finalTenantId) {
-                params.push(finalTenantId);
+            if (filterTenantId) {
+                params.push(filterTenantId);
                 query += ` WHERE m.tenant_id = $${params.length}`;
             }
         } else {
             // All non-super-admins are locked to their own tenant
-            params.push(finalTenantId);
+            params.push(filterTenantId);
             query += ` WHERE m.tenant_id = $${params.length}`;
 
             // Check if user has a merchant scope in their JWT
@@ -179,7 +181,7 @@ exports.getMerchants = async (req, res) => {
 
         const result = await pool.query(query, params);
 
-        const currentTenantId = finalTenantId || req.user.tenant_id;
+        const currentTenantId = filterTenantId || req.user.tenant_id;
 
         // Convert flat array to nested hierarchy tree
         const buildHierarchy = (merchants) => {
@@ -221,7 +223,7 @@ exports.getMerchants = async (req, res) => {
             // Level 3: Scoped to a branch
             rawTree = hierarchyData; 
         } else if (userRole === "SUPER_ADMIN" && !tenant_id) {
-            // Level 1: Global Super Admin View
+            // Level 1: Global Super Admin View (Show ALL Tenants that HAVE merchants, plus potentially others)
             const allTenantsRes = await pool.query("SELECT id, name FROM tenants ORDER BY name ASC");
             rawTree = allTenantsRes.rows.map(t => ({
                 id: t.id,
@@ -230,7 +232,8 @@ exports.getMerchants = async (req, res) => {
                 children: hierarchyData.filter(m => m.tenant_id === t.id)
             }));
         } else {
-            // Level 2: Tenant Admin View
+            // Level 2: Tenant Admin View (Show ONE Tenant as root)
+            // Use currentTenantId which is either requested (Super) or forced (Tenant Admin)
             const tRes = await pool.query("SELECT name FROM tenants WHERE id = $1", [currentTenantId]);
             const rootName = tRes.rows[0]?.name || "Our Company";
             
