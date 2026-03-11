@@ -224,6 +224,9 @@ async function initDB() {
         status TEXT NOT NULL DEFAULT 'queued',
         sent_at TIMESTAMPTZ,
         acked_at TIMESTAMPTZ,
+        expires_at TIMESTAMPTZ,
+        retry_count INTEGER NOT NULL DEFAULT 0,
+        max_retries INTEGER NOT NULL DEFAULT 3,
         created_by UUID REFERENCES users(id) ON DELETE SET NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );

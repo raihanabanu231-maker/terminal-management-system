@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: tms-backend-atpl
+    name: tms-backend-atpl-2vr9
     runtime: node
     plan: free
     buildCommand: npm install
