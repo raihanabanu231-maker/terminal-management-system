@@ -93,7 +93,7 @@ exports.login = async (req, res) => {
       id: user.id,
       tenant_id: user.tenant_id,
       jti: jti,
-      roles: roles.map(r => ({ name: r.name, id: r.role_id, scope: r.scope_type })),
+      roles: roles.map(r => ({ name: r.name, id: r.role_id, scope: r.scope_type, scope_id: r.scope_id })),
       role: (roles[0]?.name || "USER").trim().toUpperCase().replace(/\s+/g, "_")
     };
 
