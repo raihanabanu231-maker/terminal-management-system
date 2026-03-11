@@ -67,14 +67,16 @@ exports.createMerchant = async (req, res) => {
             name_path = parentRes.rows[0].name_path ? `${parentRes.rows[0].name_path}/${name}` : `${name}`;
         }
 
-        // Check Operator scoping
+        // Check Security Scoping
         const merchantRole = req.user.roles?.find(r => r.scope === 'merchant');
-        if (req.user.role === 'OPERATOR' || merchantRole) {
-            // In a flattened UI, an operator MUST have a parent_id to create anything
-            if (!parent_id) {
-                return res.status(403).json({ success: false, message: "Operators cannot create top-level merchants. Must provide a valid parent_id." });
+        const isTenantAdmin = req.user.role === 'TENANT_ADMIN' || req.user.roles?.some(r => r.name === 'Tenant Admin' || r.name === 'TENANT_ADMIN');
+
+        if (req.user.role !== 'SUPER_ADMIN' && !isTenantAdmin) {
+            // This user is likely an OPERATOR
+            if (!internalParentId) {
+                return res.status(403).json({ success: false, message: "Operators and Viewers cannot create top-level branches." });
             }
-            if (!path.includes(merchantRole.scope_id)) {
+            if (merchantRole && !path.includes(merchantRole.scope_id)) {
                 return res.status(403).json({ success: false, message: "You can only create stores under your own authorized merchant scope." });
             }
         }
