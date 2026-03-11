@@ -257,6 +257,15 @@ exports.registerWithInvite = async (req, res) => {
       console.log("❌ Registration Failed: Password missing in body");
       return res.status(400).json({ success: false, message: "Password is required for registration" });
     }
+
+    // 🎯 NEW: TC-REG-03 — Password Strength Validation
+    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&#])[A-Za-z\d@$!%*?&#]{8,}$/;
+    if (!passwordRegex.test(password)) {
+        return res.status(400).json({ 
+            success: false, 
+            message: "Password is too weak. It must be at least 8 characters long and include: 1 Uppercase, 1 Lowercase, 1 Number, and 1 Special Character (@$!%*?&#)." 
+        });
+    }
     const hashedPassword = await bcrypt.hash(password, 10);
 
     // 3. Create User in Transaction
