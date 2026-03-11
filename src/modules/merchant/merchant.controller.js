@@ -17,15 +17,23 @@ exports.createMerchant = async (req, res) => {
         return res.status(400).json({ success: false, message: "tenant_id is REQUIRED for superadmin." });
     }
 
+    // --- SUPPORT FOR SEARCHABLE HIERARCHY ---
+    // If the user sends the Company (Tenant) ID as the parent_id, 
+    // it means they want to create a first-level branch.
+    // We treat it as internalParentId = NULL for the database.
+    let internalParentId = parent_id;
+    if (parent_id === finalTenantId) {
+        internalParentId = null;
+    }
+
     try {
-        // --- ADDED: UNIQUE NAME CHECK ---
-        // Ensure no other merchant exists with the exact same name under the SAME parent in this tenant
-        const duplicateCheckQuery = parent_id
+        // --- UNIQUE NAME CHECK ---
+        const duplicateCheckQuery = internalParentId
             ? "SELECT id FROM merchants WHERE name = $1 AND tenant_id = $2 AND parent_id = $3"
             : "SELECT id FROM merchants WHERE name = $1 AND tenant_id = $2 AND parent_id IS NULL";
 
-        const queryParams = parent_id
-            ? [name, finalTenantId, parent_id]
+        const queryParams = internalParentId
+            ? [name, finalTenantId, internalParentId]
             : [name, finalTenantId];
 
         const duplicateRes = await pool.query(duplicateCheckQuery, queryParams);
@@ -33,12 +41,11 @@ exports.createMerchant = async (req, res) => {
         if (duplicateRes.rows.length > 0) {
             return res.status(400).json({
                 success: false,
-                message: parent_id
+                message: internalParentId
                     ? `A branch named '${name}' already exists inside this Region.`
                     : `A top-level Region named '${name}' already exists for this Tenant.`
             });
         }
-        // --- END UNIQUE CHECK ---
 
         const newId = crypto.randomUUID();
         let path = `${newId}`;
@@ -48,8 +55,8 @@ exports.createMerchant = async (req, res) => {
         const tenantName = tenantRes.rows.length > 0 ? tenantRes.rows[0].name : "Unknown Tenant";
         let name_path = `${tenantName}/${name}`;
 
-        if (parent_id) {
-            const parentRes = await pool.query("SELECT tenant_id, path, name_path FROM merchants WHERE id = $1", [parent_id]);
+        if (internalParentId) {
+            const parentRes = await pool.query("SELECT tenant_id, path, name_path FROM merchants WHERE id = $1", [internalParentId]);
             if (parentRes.rows.length === 0) {
                 return res.status(404).json({ success: false, message: "Parent merchant not found" });
             }
@@ -63,6 +70,7 @@ exports.createMerchant = async (req, res) => {
         // Check Operator scoping
         const merchantRole = req.user.roles?.find(r => r.scope === 'merchant');
         if (req.user.role === 'OPERATOR' || merchantRole) {
+            // In a flattened UI, an operator MUST have a parent_id to create anything
             if (!parent_id) {
                 return res.status(403).json({ success: false, message: "Operators cannot create top-level merchants. Must provide a valid parent_id." });
             }
@@ -75,7 +83,7 @@ exports.createMerchant = async (req, res) => {
             `INSERT INTO merchants (id, name, tenant_id, parent_id, external_id, path, name_path) 
              VALUES ($1, $2, $3, $4, $5, $6, $7) 
              RETURNING *`,
-            [newId, name, finalTenantId, parent_id || null, external_id || null, path, name_path]
+            [newId, name, finalTenantId, internalParentId, external_id || null, path, name_path]
         );
 
         res.status(201).json({
