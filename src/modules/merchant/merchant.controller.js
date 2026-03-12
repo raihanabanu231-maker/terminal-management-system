@@ -235,7 +235,7 @@ exports.getMerchants = async (req, res) => {
             // Level 2: Tenant Admin View (Show ONE Tenant as root)
             // Use currentTenantId which is either requested (Super) or forced (Tenant Admin)
             const tRes = await pool.query("SELECT name FROM tenants WHERE id = $1", [currentTenantId]);
-            const rootName = tRes.rows[0]?.name || "Our Company";
+            const rootName = tRes.rows[0]?.name || "Organization Not Found (Deleted)";
             
             rawTree = [
                 {
