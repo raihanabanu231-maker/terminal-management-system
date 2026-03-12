@@ -7,7 +7,7 @@ const SYSTEM_TENANT_ID = 'f8261f95-d148-4c77-9e80-d254129a8843';
 
 exports.inviteUser = async (req, res) => {
   console.log("📥 Invite Request Body:", req.body);
-  const { email, role_name, tenant_id, merchant_id } = req.body;
+  let { email, role_name, tenant_id, merchant_id } = req.body;
 
   const merchantRole = req.user.roles?.find(r => r.scope === 'merchant');
   const isTenantAdmin = req.user.role === 'TENANT_ADMIN' || req.user.roles?.some(r => r.name === 'Tenant Admin' || r.name === 'TENANT_ADMIN');
@@ -116,6 +116,15 @@ exports.inviteUser = async (req, res) => {
 
     if (!finalTenantId && req.user.role !== 'SUPER_ADMIN') {
       return res.status(400).json({ success: false, message: "tenant_id is required" });
+    }
+
+    // 🎯 NEW: Frontend Dropdown Workaround
+    // The frontend tree UI places the Tenant at the top of the 'Branch' dropdown.
+    // If the user selects the Tenant (Company Name), the frontend sends the Tenant ID as the merchant_id.
+    // We must reset it to null so it's treated as a Tenant-level invite, not a Branch-level invite.
+    if (merchant_id === finalTenantId) {
+        console.log("⚠️ Frontend passed Tenant ID as Merchant ID. Resolving to Tenant-level invitation.");
+        merchant_id = null;
     }
 
     // Comprehensive UUID validation for both fields to prevent 22P02 errors
