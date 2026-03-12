@@ -161,12 +161,14 @@ exports.getMerchants = async (req, res) => {
         if (userRole === "SUPER_ADMIN") {
             if (filterTenantId) {
                 params.push(filterTenantId);
-                query += ` WHERE m.tenant_id = $${params.length}`;
+                query += ` WHERE m.tenant_id = $${params.length} AND m.deleted_at IS NULL`;
+            } else {
+                query += ` WHERE m.deleted_at IS NULL`;
             }
         } else {
             // All non-super-admins are locked to their own tenant
             params.push(filterTenantId);
-            query += ` WHERE m.tenant_id = $${params.length}`;
+            query += ` WHERE m.tenant_id = $${params.length} AND m.deleted_at IS NULL`;
 
             // Check if user has a merchant scope in their JWT
             const merchantRole = req.user.roles?.find(r => r.scope === 'merchant');
@@ -414,10 +416,13 @@ exports.deleteMerchant = async (req, res) => {
             return res.status(403).json({ success: false, message: "Access Denied: You cannot delete the root Merchant of your own administrative scope." });
         }
 
-        // The PostgreSQL DB has "ON DELETE CASCADE", so deleting this will automatically delete all child stores!
-        await pool.query("DELETE FROM merchants WHERE id = $1", [id]);
+        // Soft Delete the entire subtree using the path
+        await pool.query(
+            "UPDATE merchants SET deleted_at = NOW() WHERE path LIKE $1 || '%' AND deleted_at IS NULL", 
+            [currentMerchant.path]
+        );
 
-        res.json({ success: true, message: "Merchant and all child locations deleted successfully" });
+        res.json({ success: true, message: "Merchant and all child locations soft-deleted successfully" });
     } catch (error) {
         console.error("DeleteMerchant ERROR:", error);
         res.status(500).json({ message: "Server error", detail: error.message });

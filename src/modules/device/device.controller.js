@@ -426,9 +426,13 @@ exports.deleteDevice = async (req, res) => {
             return res.status(403).json({ success: false, message: "Unauthorized tenant scope" });
         }
 
-        await pool.query("DELETE FROM devices WHERE id = $1", [id]);
+        const result = await pool.query("UPDATE devices SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING *", [id]);
 
-        res.json({ success: true, message: "Device deleted successfully" });
+        if (result.rows.length === 0) {
+          return res.status(404).json({ success: false, message: "Device not found or already deleted" });
+        }
+
+        res.json({ success: true, message: "Device soft-deleted successfully" });
     } catch (error) {
         console.error("DeleteDevice Error:", error);
         res.status(500).json({ success: false, message: "Server error" });

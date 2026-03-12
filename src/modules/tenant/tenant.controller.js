@@ -41,7 +41,7 @@ exports.createTenant = async (req, res) => {
 
 exports.getTenants = async (req, res) => {
   try {
-    const result = await pool.query("SELECT * FROM tenants ORDER BY created_at DESC");
+    const result = await pool.query("SELECT * FROM tenants WHERE deleted_at IS NULL ORDER BY created_at DESC");
     res.json({
       success: true,
       data: result.rows
@@ -89,13 +89,13 @@ exports.deleteTenant = async (req, res) => {
   }
 
   try {
-    const result = await pool.query("DELETE FROM tenants WHERE id = $1 RETURNING *", [id]);
+    const result = await pool.query("UPDATE tenants SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING *", [id]);
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: "Tenant not found" });
+      return res.status(404).json({ success: false, message: "Tenant not found or already deleted" });
     }
 
-    res.json({ success: true, message: "Tenant deleted successfully" });
+    res.json({ success: true, message: "Tenant soft-deleted successfully" });
   } catch (error) {
     console.error("DeleteTenant ERROR:", error);
     res.status(500).json({ success: false, message: "Server error" });

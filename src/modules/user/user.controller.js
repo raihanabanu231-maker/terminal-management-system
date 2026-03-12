@@ -280,10 +280,12 @@ exports.getUsers = async (req, res) => {
 
     if (req.user.role !== "SUPER_ADMIN") {
       params.push(req.user.tenant_id);
-      query += ` WHERE u.tenant_id = $1`;
+      query += ` WHERE u.tenant_id = $1 AND u.deleted_at IS NULL`;
     } else if (req.query.tenant_id) {
       params.push(req.query.tenant_id);
-      query += ` WHERE u.tenant_id = $1`;
+      query += ` WHERE u.tenant_id = $1 AND u.deleted_at IS NULL`;
+    } else {
+      query += ` WHERE u.deleted_at IS NULL`;
     }
 
     query += ` GROUP BY u.id, t.name ORDER BY u.created_at DESC`;
@@ -370,13 +372,13 @@ exports.deleteUser = async (req, res) => {
         return res.status(403).json({ success: false, message: "Security Lock: The primary Super Admin account is protected." });
     }
 
-    const result = await pool.query("DELETE FROM users WHERE id = $1 RETURNING *", [id]);
+    const result = await pool.query("UPDATE users SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING *", [id]);
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: "User not found" });
+      return res.status(404).json({ success: false, message: "User not found or already deleted" });
     }
 
-    res.json({ success: true, message: "User deleted successfully" });
+    res.json({ success: true, message: "User soft-deleted successfully" });
   } catch (error) {
     console.error("DeleteUser Error:", error);
     res.status(500).json({ success: false, message: "Server error" });
