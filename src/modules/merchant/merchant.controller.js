@@ -210,6 +210,7 @@ exports.getMerchants = async (req, res) => {
             return nodes.map(node => ({
                 id: node.id,
                 name: node.name,
+                status: node.status || 'active', // Default to active if missing
                 parent_id: node.parent_id || null,
                 level: currentLevel,
                 children: simplifyTree(node.children || [], currentLevel + 1)
@@ -226,23 +227,26 @@ exports.getMerchants = async (req, res) => {
             rawTree = hierarchyData; 
         } else if (userRole === "SUPER_ADMIN" && !tenant_id) {
             // Level 1: Global Super Admin View (Show ALL Tenants that HAVE merchants, plus potentially others)
-            const allTenantsRes = await pool.query("SELECT id, name FROM tenants ORDER BY name ASC");
+            const allTenantsRes = await pool.query("SELECT id, name, status FROM tenants WHERE deleted_at IS NULL ORDER BY name ASC");
             rawTree = allTenantsRes.rows.map(t => ({
                 id: t.id,
                 name: t.name,
+                status: t.status,
                 parent_id: null,
                 children: hierarchyData.filter(m => m.tenant_id === t.id)
             }));
         } else {
             // Level 2: Tenant Admin View (Show ONE Tenant as root)
             // Use currentTenantId which is either requested (Super) or forced (Tenant Admin)
-            const tRes = await pool.query("SELECT name FROM tenants WHERE id = $1", [currentTenantId]);
+            const tRes = await pool.query("SELECT name, status FROM tenants WHERE id = $1", [currentTenantId]);
             const rootName = tRes.rows[0]?.name || "Organization Not Found (Deleted)";
+            const rootStatus = tRes.rows[0]?.status || "unknown";
             
             rawTree = [
                 {
                     id: currentTenantId, 
                     name: rootName,
+                    status: rootStatus,
                     parent_id: null,
                     children: hierarchyData
                 }
