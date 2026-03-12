@@ -79,6 +79,14 @@ exports.updateTenant = async (req, res) => {
 
 exports.deleteTenant = async (req, res) => {
   const { id } = req.params;
+  const SYSTEM_TENANT_ID = 'f8261f95-d148-4c77-9e80-d254129a8843';
+
+  if (id === SYSTEM_TENANT_ID) {
+    return res.status(403).json({ 
+      success: false, 
+      message: "Security Lock: The System Administration tenant is protected and cannot be deleted. This is required for platform operations." 
+    });
+  }
 
   try {
     const result = await pool.query("DELETE FROM tenants WHERE id = $1 RETURNING *", [id]);

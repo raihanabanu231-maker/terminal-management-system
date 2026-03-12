@@ -364,6 +364,12 @@ exports.deleteUser = async (req, res) => {
   }
 
   try {
+    // Safety check: Prevent deleting the primary superadmin by email
+    const checkSuper = await pool.query("SELECT email FROM users WHERE id = $1", [id]);
+    if (checkSuper.rows.length > 0 && checkSuper.rows[0].email === 'superadmin@tms.com') {
+        return res.status(403).json({ success: false, message: "Security Lock: The primary Super Admin account is protected." });
+    }
+
     const result = await pool.query("DELETE FROM users WHERE id = $1 RETURNING *", [id]);
 
     if (result.rows.length === 0) {
