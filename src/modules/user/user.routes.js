@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 
-const { inviteUser, getInvitations, deleteInvitation, getUsers } = require("./user.controller");
+const { inviteUser, getInvitations, deleteInvitation, getUsers, updateUser, deleteUser } = require("./user.controller");
 const { verifyToken } = require("../../middleware/auth.middleware");
 const { authorizeRoles } = require("../../middleware/role.middleware");
 
@@ -19,6 +19,22 @@ router.get(
   verifyToken,
   authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR", "VIEWER"),
   getUsers
+);
+
+// Update User
+router.put(
+  "/:id",
+  verifyToken,
+  authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN"),
+  updateUser
+);
+
+// Delete User
+router.delete(
+  "/:id",
+  verifyToken,
+  authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN"),
+  deleteUser
 );
 
 router.get(

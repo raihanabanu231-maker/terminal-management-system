@@ -6,7 +6,9 @@ const {
     sendDeviceCommand,
     getPendingCommands,
     ackCommand,
-    getDevices
+    getDevices,
+    updateDevice,
+    deleteDevice
 } = require("./device.controller");
 const {
     reportIncident,
@@ -58,6 +60,22 @@ router.post(
     "/:commandId/ack",
     verifyToken,
     ackCommand
+);
+
+// Update Device
+router.put(
+    "/:id",
+    verifyToken,
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN"),
+    updateDevice
+);
+
+// Delete Device
+router.delete(
+    "/:id",
+    verifyToken,
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN"),
+    deleteDevice
 );
 
 // 🚨 Incidents & Telemetry (Week 3)

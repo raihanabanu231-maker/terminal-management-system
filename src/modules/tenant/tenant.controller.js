@@ -56,3 +56,41 @@ exports.getTenants = async (req, res) => {
   }
 };
 
+exports.updateTenant = async (req, res) => {
+  const { id } = req.params;
+  const { name, status } = req.body;
+
+  try {
+    const result = await pool.query(
+      "UPDATE tenants SET name = COALESCE($1, name), status = COALESCE($2, status) WHERE id = $3 RETURNING *",
+      [name, status, id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Tenant not found" });
+    }
+
+    res.json({ success: true, message: "Tenant updated successfully", data: result.rows[0] });
+  } catch (error) {
+    console.error("UpdateTenant ERROR:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+exports.deleteTenant = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const result = await pool.query("DELETE FROM tenants WHERE id = $1 RETURNING *", [id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Tenant not found" });
+    }
+
+    res.json({ success: true, message: "Tenant deleted successfully" });
+  } catch (error) {
+    console.error("DeleteTenant ERROR:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+

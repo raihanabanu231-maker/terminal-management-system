@@ -376,3 +376,61 @@ exports.startExpiryJob = () => {
         }
     }, 10 * 60 * 1000); // Check every 10 minutes
 };
+
+exports.updateDevice = async (req, res) => {
+    const { id } = req.params;
+    const { model, status, merchant_id } = req.body;
+    const { tenant_id, role } = req.user;
+
+    try {
+        // Find device
+        const checkRes = await pool.query("SELECT * FROM devices WHERE id = $1", [id]);
+        if (checkRes.rows.length === 0) return res.status(404).json({ success: false, message: "Device not found" });
+
+        const device = checkRes.rows[0];
+
+        // Authorization
+        if (role !== "SUPER_ADMIN" && device.tenant_id !== tenant_id) {
+            return res.status(403).json({ success: false, message: "Unauthorized tenant scope" });
+        }
+
+        const result = await pool.query(
+            `UPDATE devices SET 
+                model = COALESCE($1, model), 
+                status = COALESCE($2, status), 
+                merchant_id = COALESCE($3, merchant_id) 
+             WHERE id = $4 RETURNING *`,
+            [model, status, merchant_id, id]
+        );
+
+        res.json({ success: true, message: "Device updated successfully", device: result.rows[0] });
+    } catch (error) {
+        console.error("UpdateDevice Error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
+exports.deleteDevice = async (req, res) => {
+    const { id } = req.params;
+    const { tenant_id, role } = req.user;
+
+    try {
+        // Find device
+        const checkRes = await pool.query("SELECT * FROM devices WHERE id = $1", [id]);
+        if (checkRes.rows.length === 0) return res.status(404).json({ success: false, message: "Device not found" });
+
+        const device = checkRes.rows[0];
+
+        // Authorization
+        if (role !== "SUPER_ADMIN" && device.tenant_id !== tenant_id) {
+            return res.status(403).json({ success: false, message: "Unauthorized tenant scope" });
+        }
+
+        await pool.query("DELETE FROM devices WHERE id = $1", [id]);
+
+        res.json({ success: true, message: "Device deleted successfully" });
+    } catch (error) {
+        console.error("DeleteDevice Error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};

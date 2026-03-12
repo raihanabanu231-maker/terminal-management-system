@@ -329,3 +329,50 @@ exports.deleteInvitation = async (req, res) => {
     res.status(500).json({ success: false, message: "Server error", detail: error.message });
   }
 };
+
+exports.updateUser = async (req, res) => {
+  const { id } = req.params;
+  const { first_name, last_name, mobile, status } = req.body;
+
+  try {
+    const result = await pool.query(
+      `UPDATE users SET 
+        first_name = COALESCE($1, first_name), 
+        last_name = COALESCE($2, last_name), 
+        mobile = COALESCE($3, mobile), 
+        status = COALESCE($4, status) 
+       WHERE id = $5 RETURNING *`,
+      [first_name, last_name, mobile, status, id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    res.json({ success: true, message: "User updated successfully", user: result.rows[0] });
+  } catch (error) {
+    console.error("UpdateUser Error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+exports.deleteUser = async (req, res) => {
+  const { id } = req.params;
+
+  if (id === req.user.id) {
+    return res.status(400).json({ success: false, message: "You cannot delete your own account" });
+  }
+
+  try {
+    const result = await pool.query("DELETE FROM users WHERE id = $1 RETURNING *", [id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    res.json({ success: true, message: "User deleted successfully" });
+  } catch (error) {
+    console.error("DeleteUser Error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
