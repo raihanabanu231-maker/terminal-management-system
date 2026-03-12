@@ -131,33 +131,33 @@ exports.inviteUser = async (req, res) => {
     const scopeType = merchant_id ? 'merchant' : 'tenant';
     const scopeId = merchant_id || finalTenantId;
 
-    // --- SECURITY ACCESS CHECK FOR INVITER ---
-    if (req.user.role !== 'SUPER_ADMIN' && !isTenantAdmin) {
-        // This is a Branch Admin (Merchant Scoped)
-        if (!merchant_id) {
-            return res.status(403).json({ success: false, message: "Branch-level admins can only invite users to their own branch or sub-branches." });
-        }
-        
-        // Use the scope_id from the freshly fixed JWT
-        const userScopeId = merchantRole?.scope_id;
-        if (!userScopeId) {
-            return res.status(403).json({ success: false, message: "Unauthorized: Missing administrative scope identifier." });
-        }
-
-        // Verify the target merchant_id is inside the inviter's scope
-        const targetMerch = await pool.query("SELECT path FROM merchants WHERE id = $1", [merchant_id]);
+    // --- MERCHANT VALIDATION ---
+    if (merchant_id) {
+        const targetMerch = await pool.query("SELECT path, deleted_at FROM merchants WHERE id = $1", [merchant_id]);
         if (targetMerch.rows.length === 0) {
-            return res.status(404).json({ success: false, message: "Target branch not found." });
+            return res.status(404).json({ success: false, message: "Target branch not found in the database. It might have been deleted." });
+        }
+        if (targetMerch.rows[0].deleted_at) {
+            return res.status(400).json({ success: false, message: "Target branch is currently deactivated (soft-deleted). Please restore it before inviting users." });
         }
 
-        const isWithinMyScope = targetMerch.rows[0].path.split('/').includes(userScopeId);
-        if (!isWithinMyScope) {
-            return res.status(403).json({ 
-                success: false, 
-                message: "Security Violation: You cannot invite users to a branch outside of your authorized scope." 
-            });
+        // Branch-level Admin Scope Check
+        if (req.user.role !== 'SUPER_ADMIN' && !isTenantAdmin) {
+            const userScopeId = merchantRole?.scope_id;
+            if (!userScopeId) {
+                return res.status(403).json({ success: false, message: "Unauthorized: Missing administrative scope identifier." });
+            }
+
+            const isWithinMyScope = targetMerch.rows[0].path.split('/').includes(userScopeId);
+            if (!isWithinMyScope) {
+                return res.status(403).json({ 
+                    success: false, 
+                    message: "Security Violation: You cannot invite users to a branch outside of your authorized scope." 
+                });
+            }
         }
     }
+    // ----------------------------
 
     // 3. Generate Token
     const rawToken = crypto.randomBytes(32).toString('hex');
