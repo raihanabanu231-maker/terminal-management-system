@@ -12,6 +12,7 @@ const merchantRoutes = require("./modules/merchant/merchant.routes");
 const deviceRoutes = require("./modules/device/device.routes");
 const artifactRoutes = require("./modules/artifact/artifact.routes");
 const dashboardRoutes = require("./modules/dashboard/dashboard.routes");
+const auditRoutes = require("./modules/audit/audit.routes");
 
 const rateLimit = require("express-rate-limit");
 
@@ -59,6 +60,7 @@ app.use(`${API_V1}/merchants`, merchantRoutes);
 app.use(`${API_V1}/devices`, deviceRoutes);
 app.use(`${API_V1}/artifacts`, artifactRoutes);
 app.use(`${API_V1}/dashboard`, dashboardRoutes);
+app.use(`${API_V1}/audit`, auditRoutes);
 
 // Default test route
 app.get("/", (req, res) => {
