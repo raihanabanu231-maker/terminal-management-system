@@ -49,7 +49,7 @@ exports.createMerchant = async (req, res) => {
 
         const newId = crypto.randomUUID();
         let path = `${newId}`;
-        
+
         // Fetch Tenant Name to prepend to name_path
         const tenantRes = await pool.query("SELECT name FROM tenants WHERE id = $1", [finalTenantId]);
         const tenantName = tenantRes.rows.length > 0 ? tenantRes.rows[0].name : "Unknown Tenant";
@@ -74,7 +74,7 @@ exports.createMerchant = async (req, res) => {
         // Level 1: Super Admin -> No Restrictions
         if (req.user.role === 'SUPER_ADMIN') {
             // Full Access
-        } 
+        }
         // Level 2: Tenant Admin -> Can create anywhere in their Tenant
         else if (isTenantAdmin) {
             // Full Access within Tenant
@@ -83,34 +83,34 @@ exports.createMerchant = async (req, res) => {
         else if (merchantRole) {
             // A branch admin MUST provide a parent_id (they cannot create top-level/root branches)
             if (!internalParentId) {
-                return res.status(403).json({ 
-                    success: false, 
-                    message: "Permission Denied: Branch-level admins can only create sub-branches, not new top-level organizations." 
+                return res.status(403).json({
+                    success: false,
+                    message: "Permission Denied: Branch-level admins can only create sub-branches, not new top-level organizations."
                 });
             }
 
             // The branch admin can ONLY create under their own authorized scope
             // We check if the 'path' of the parent they provided contains their own scope_id
             const userScopeId = merchantRole.scope_id;
-            
+
             // Re-fetch parent info for the explicit scope check (just to be 100% safe)
             const parentCheck = await pool.query("SELECT id, path FROM merchants WHERE id = $1", [internalParentId]);
             if (parentCheck.rows.length === 0) {
-                 return res.status(404).json({ success: false, message: "Parent branch not found" });
+                return res.status(404).json({ success: false, message: "Parent branch not found" });
             }
 
             const parentPath = parentCheck.rows[0].path;
-            
+
             // Check if the parent is my own branch or a grandchild of my branch
             const isWithinMyScope = parentPath.split('/').includes(userScopeId);
 
             if (!isWithinMyScope) {
-                return res.status(403).json({ 
-                    success: false, 
-                    message: "Security Violation: You are not authorized to create branches outside of your own hierarchy scope." 
+                return res.status(403).json({
+                    success: false,
+                    message: "Security Violation: You are not authorized to create branches outside of your own hierarchy scope."
                 });
             }
-        } 
+        }
         // Other (Viewer, etc.)
         else {
             return res.status(403).json({ success: false, message: "Unauthorized: You do not have permission to create merchants." });
@@ -142,8 +142,8 @@ exports.getMerchants = async (req, res) => {
     try {
         // For Super Admin, if no tenant_id is provided in the query, we want to fetch EVERYTHING.
         // For others, we lock them to their own tenant_id from the token.
-        const filterTenantId = (userRole === "SUPER_ADMIN") 
-            ? tenant_id 
+        const filterTenantId = (userRole === "SUPER_ADMIN")
+            ? tenant_id
             : req.user.tenant_id;
 
         let query = `
@@ -224,7 +224,7 @@ exports.getMerchants = async (req, res) => {
 
         if (merchantRole) {
             // Level 3: Scoped to a branch
-            rawTree = hierarchyData; 
+            rawTree = hierarchyData;
         } else if (userRole === "SUPER_ADMIN" && !tenant_id) {
             // Level 1: Global Super Admin View (Show ALL Tenants that HAVE merchants, plus potentially others)
             const allTenantsRes = await pool.query("SELECT id, name, status FROM tenants WHERE deleted_at IS NULL ORDER BY name ASC");
@@ -241,10 +241,10 @@ exports.getMerchants = async (req, res) => {
             const tRes = await pool.query("SELECT name, status FROM tenants WHERE id = $1", [currentTenantId]);
             const rootName = tRes.rows[0]?.name || "Organization Not Found (Deleted)";
             const rootStatus = tRes.rows[0]?.status || "unknown";
-            
+
             rawTree = [
                 {
-                    id: currentTenantId, 
+                    id: currentTenantId,
                     name: rootName,
                     status: rootStatus,
                     parent_id: null,
@@ -255,9 +255,9 @@ exports.getMerchants = async (req, res) => {
 
         const cleanTree = simplifyTree(rawTree, 1);
 
-        res.json({ 
-            success: true, 
-            data: cleanTree 
+        res.json({
+            success: true,
+            data: cleanTree
         });
     } catch (error) {
         console.error("GetMerchants ERROR:", error);
@@ -422,7 +422,7 @@ exports.deleteMerchant = async (req, res) => {
 
         // Soft Delete the entire subtree using the path
         await pool.query(
-            "UPDATE merchants SET deleted_at = NOW() WHERE path LIKE $1 || '%' AND deleted_at IS NULL", 
+            "UPDATE merchants SET deleted_at = NOW() WHERE path LIKE $1 || '%' AND deleted_at IS NULL",
             [currentMerchant.path]
         );
 

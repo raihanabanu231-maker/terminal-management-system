@@ -7,10 +7,7 @@ const { logAudit } = require("../../utils/audit");
 exports.generateEnrollmentToken = async (req, res) => {
     const { serial, model, merchant_id, tenant_id } = req.body;
 
-    // A device MUST be assigned to a specific store (merchant)
-    if (!merchant_id) {
-        return res.status(400).json({ success: false, message: "merchant_id is required to onboard a device" });
-    }
+    // A device serial is required to track the hardware
     if (!serial) {
         return res.status(400).json({ success: false, message: "Device serial number is required" });
     }
@@ -24,10 +21,12 @@ exports.generateEnrollmentToken = async (req, res) => {
     }
 
     try {
-        // Verify merchant belongs to the same tenant and exists
-        const merchRes = await pool.query("SELECT id FROM merchants WHERE id = $1 AND tenant_id = $2", [merchant_id, finalTenantId]);
-        if (merchRes.rows.length === 0) {
-            return res.status(404).json({ success: false, message: "Merchant not found or does not belong to this tenant" });
+        // If merchant_id is provided, verify it belongs to the same tenant
+        if (merchant_id) {
+            const merchRes = await pool.query("SELECT id FROM merchants WHERE id = $1 AND tenant_id = $2", [merchant_id, finalTenantId]);
+            if (merchRes.rows.length === 0) {
+                return res.status(404).json({ success: false, message: "Merchant not found or does not belong to this tenant" });
+            }
         }
         const token = crypto.randomBytes(32).toString("hex");
         const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
