@@ -7,8 +7,10 @@ const {
     getPendingCommands,
     ackCommand,
     getDevices,
+    getDeviceById,
     updateDevice,
-    deleteDevice
+    deleteDevice,
+    receiveHeartbeat
 } = require("./device.controller");
 const {
     reportIncident,
@@ -18,7 +20,11 @@ const {
 const { verifyToken } = require("../../middleware/auth.middleware");
 const { authorizeRoles } = require("../../middleware/role.middleware");
 
-// Get All Devices (Protected: Super Admin, Tenant Admin, Operator, Viewer)
+// =============================================
+// FIXED PATHS FIRST (must come before /:id)
+// =============================================
+
+// Get All Devices (Dashboard List)
 router.get(
     "/",
     verifyToken,
@@ -26,16 +32,14 @@ router.get(
     getDevices
 );
 
-// Get Single Device (For Detail Page)
-const { getDeviceById } = require("./device.controller");
+// Device Pull: Pending Commands (called by device)
 router.get(
-    "/:id",
+    "/pending",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR", "VIEWER"),
-    getDeviceById
+    getPendingCommands
 );
 
-// Generate Token (Protected: Super, Tenant, and Operators)
+// Generate Enrollment Token (QR Code)
 router.post(
     "/enroll-token",
     verifyToken,
@@ -49,7 +53,27 @@ router.post(
     enrollDevice
 );
 
-// Remote Command (Protected: Admin & Operators)
+// Device Heartbeat (called by device)
+router.post("/heartbeat", verifyToken, receiveHeartbeat);
+
+// Incidents & Telemetry
+router.post("/incidents", verifyToken, reportIncident);
+router.get("/incidents", verifyToken, authorizeRoles("SUPER_ADMIN"), getIncidents);
+router.post("/telemetry", verifyToken, reportTelemetry);
+
+// =============================================
+// DYNAMIC PATHS (/:id, /:deviceId, /:commandId)
+// =============================================
+
+// Get Single Device (Detail Page)
+router.get(
+    "/:id",
+    verifyToken,
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR", "VIEWER"),
+    getDeviceById
+);
+
+// Send Remote Command
 router.post(
     "/:deviceId/command",
     verifyToken,
@@ -57,14 +81,7 @@ router.post(
     sendDeviceCommand
 );
 
-// Device Pull: Pending Commands (Protected - called by device)
-router.get(
-    "/pending",
-    verifyToken,
-    getPendingCommands
-);
-
-// Device ACK: Confirm Command Execution (Protected - called by device)
+// Device ACK: Confirm Command Execution (called by device)
 router.post(
     "/:commandId/ack",
     verifyToken,
@@ -86,14 +103,5 @@ router.delete(
     authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN"),
     deleteDevice
 );
-
-// 🚨 Incidents & Telemetry (Week 3)
-router.post("/incidents", verifyToken, reportIncident);
-router.get("/incidents", verifyToken, authorizeRoles("SUPER_ADMIN"), getIncidents);
-router.post("/telemetry", verifyToken, reportTelemetry);
-
-// 💓 Heartbeat (Week 2 - Device Health)
-const { receiveHeartbeat } = require("./device.controller");
-router.post("/heartbeat", verifyToken, receiveHeartbeat);
 
 module.exports = router;
