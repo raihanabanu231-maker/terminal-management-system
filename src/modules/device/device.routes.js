@@ -83,4 +83,8 @@ router.post("/incidents", verifyToken, reportIncident);
 router.get("/incidents", verifyToken, authorizeRoles("SUPER_ADMIN"), getIncidents);
 router.post("/telemetry", verifyToken, reportTelemetry);
 
+// 💓 Heartbeat (Week 2 - Device Health)
+const { receiveHeartbeat } = require("./device.controller");
+router.post("/heartbeat", verifyToken, receiveHeartbeat);
+
 module.exports = router;
