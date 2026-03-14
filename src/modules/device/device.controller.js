@@ -293,6 +293,39 @@ exports.getDevices = async (req, res) => {
     }
 };
 
+// 5. Get Single Device (For Detail Page)
+exports.getDeviceById = async (req, res) => {
+    const { id } = req.params;
+    const { tenant_id, role } = req.user;
+
+    try {
+        const result = await pool.query(
+            `SELECT d.*, m.name as merchant_name, t.name as tenant_name 
+             FROM devices d
+             JOIN tenants t ON d.tenant_id = t.id
+             LEFT JOIN merchants m ON d.merchant_id = m.id
+             WHERE d.id = $1 AND d.deleted_at IS NULL`,
+            [id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ success: false, message: "Device not found" });
+        }
+
+        const device = result.rows[0];
+
+        // Authorization Scoping
+        if (role !== "SUPER_ADMIN" && device.tenant_id !== tenant_id) {
+            return res.status(403).json({ success: false, message: "Unauthorized access to device in different tenant" });
+        }
+
+        res.json({ success: true, data: device });
+    } catch (error) {
+        console.error("GetDeviceById Error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
 // 5. Receive Device Heartbeat (Telemetry Ping)
 exports.receiveHeartbeat = async (req, res) => {
     // Note: This endpoint is protected by authorizeRoles("DEVICE"), which means

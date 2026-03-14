@@ -26,6 +26,15 @@ router.get(
     getDevices
 );
 
+// Get Single Device (For Detail Page)
+const { getDeviceById } = require("./device.controller");
+router.get(
+    "/:id",
+    verifyToken,
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR", "VIEWER"),
+    getDeviceById
+);
+
 // Generate Token (Protected: Super, Tenant, and Operators)
 router.post(
     "/enroll-token",
