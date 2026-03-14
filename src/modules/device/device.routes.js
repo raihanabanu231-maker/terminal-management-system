@@ -49,11 +49,11 @@ router.post(
     enrollDevice
 );
 
-// Remote Command (Protected: Super Admin Only)
+// Remote Command (Protected: Admin & Operators)
 router.post(
     "/:deviceId/command",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN"),
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR"),
     sendDeviceCommand
 );
 
