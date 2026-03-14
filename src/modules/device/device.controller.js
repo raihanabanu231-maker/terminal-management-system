@@ -110,7 +110,10 @@ exports.enrollDevice = async (req, res) => {
 exports.sendDeviceCommand = async (req, res) => {
     const { deviceId } = req.params;
     const { type, payload } = req.body;
-    const tenant_id = req.user.tenant_id;
+
+    if (!type) {
+        return res.status(400).json({ success: false, message: "Command 'type' is required (e.g. REBOOT, LOCK, SYNC)" });
+    }
 
     try {
         let sql = "SELECT id, tenant_id FROM devices WHERE id = $1";
@@ -124,7 +127,7 @@ exports.sendDeviceCommand = async (req, res) => {
         const deviceRes = await pool.query(sql, params);
 
         if (deviceRes.rows.length === 0) {
-            return res.status(404).json({ success: false, message: "Device not found" });
+            return res.status(404).json({ success: false, message: "Device not found or not in your tenant scope" });
         }
 
         const device = deviceRes.rows[0];
@@ -150,14 +153,14 @@ exports.sendDeviceCommand = async (req, res) => {
 
         if (success) {
             await pool.query("UPDATE commands SET status = 'sent', sent_at = NOW() WHERE id = $1", [commandId]);
-            res.json({ success: true, command_id: commandId });
+            res.json({ success: true, command_id: commandId, status: "sent" });
         } else {
-            res.json({ success: true, message: "Queued (Device Offline)", command_id: commandId });
+            res.json({ success: true, message: "Queued (Device Offline)", command_id: commandId, status: "queued" });
         }
 
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: "Server error" });
+        console.error("SEND_COMMAND_ERROR:", error);
+        res.status(500).json({ success: false, message: "Server error", detail: error.message });
     }
 };
 // 4. Device Command Polling (The "Pull" fallback for Week 2)
