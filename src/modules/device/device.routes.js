@@ -19,6 +19,7 @@ const {
 } = require("./incident.controller");
 const { verifyToken } = require("../../middleware/auth.middleware");
 const { authorizeRoles } = require("../../middleware/role.middleware");
+const { deviceRateLimit } = require("../../middleware/deviceRateLimit.middleware");
 
 // =============================================
 // FIXED PATHS FIRST (must come before /:id)
@@ -32,10 +33,11 @@ router.get(
     getDevices
 );
 
-// Device Pull: Pending Commands (called by device)
+// Device Pull: Pending Commands (called by device, max 60/min)
 router.get(
     "/pending",
     verifyToken,
+    deviceRateLimit("command_poll", 60),
     getPendingCommands
 );
 
@@ -53,8 +55,8 @@ router.post(
     enrollDevice
 );
 
-// Device Heartbeat (called by device)
-router.post("/heartbeat", verifyToken, receiveHeartbeat);
+// Device Heartbeat (called by device, max 120/min)
+router.post("/heartbeat", verifyToken, deviceRateLimit("heartbeat", 120), receiveHeartbeat);
 
 // Incidents & Telemetry
 router.post("/incidents", verifyToken, reportIncident);

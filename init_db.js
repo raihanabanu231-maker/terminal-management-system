@@ -342,6 +342,73 @@ async function initDB() {
       CREATE INDEX IF NOT EXISTS idx_incidents_tenant_id ON device_incidents(tenant_id, status);
     `);
 
+    // --- Week 2 Spec Tables (Jayakumar Architecture) ---
+
+    // 20. Enrollment Tokens (Reusable, multi-device tokens)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS enrollment_tokens (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        merchant_id UUID REFERENCES merchants(id) ON DELETE SET NULL,
+        device_profile_id UUID REFERENCES device_profiles(id) ON DELETE SET NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        max_enrollments INTEGER NOT NULL DEFAULT 1,
+        remaining_enrollments INTEGER NOT NULL DEFAULT 1,
+        expires_at TIMESTAMPTZ NOT NULL,
+        created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    // 21. Device Tokens (Separate token lifecycle tracking)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS device_tokens (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL UNIQUE,
+        issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        expires_at TIMESTAMPTZ,
+        revoked_at TIMESTAMPTZ
+      );
+    `);
+
+    // 22. Device Rate Limits (Per-device flood protection)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS device_rate_limits (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        endpoint TEXT NOT NULL,
+        request_count INTEGER NOT NULL DEFAULT 0,
+        window_start TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(device_id, endpoint)
+      );
+    `);
+
+    // Add device_status column if not exists (ONLINE, DEGRADED, OFFLINE)
+    await client.query(`
+      ALTER TABLE devices ADD COLUMN IF NOT EXISTS device_status TEXT NOT NULL DEFAULT 'offline';
+    `);
+
+    // Add storage_free_mb and agent_version to heartbeats if not exists
+    await client.query(`
+      ALTER TABLE device_heartbeats ADD COLUMN IF NOT EXISTS storage_free_mb INTEGER;
+    `);
+
+    // Add execution_time_ms to commands if not exists
+    await client.query(`
+      ALTER TABLE commands ADD COLUMN IF NOT EXISTS execution_time_ms INTEGER;
+    `);
+
+    // Week 2 Indexes
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_enrollment_tokens_hash ON enrollment_tokens(token_hash);
+      CREATE INDEX IF NOT EXISTS idx_device_tokens_hash ON device_tokens(token_hash);
+      CREATE INDEX IF NOT EXISTS idx_device_tokens_device ON device_tokens(device_id);
+      CREATE INDEX IF NOT EXISTS idx_device_rate_limits ON device_rate_limits(device_id, endpoint);
+      CREATE INDEX IF NOT EXISTS idx_commands_status_expires ON commands(status, expires_at);
+      CREATE INDEX IF NOT EXISTS idx_devices_last_seen ON devices(last_seen, status);
+    `);
+
     // Seed Initial Roles (System Level)
     await client.query(`
       INSERT INTO roles (tenant_id, name, permissions)

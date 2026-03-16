@@ -5,7 +5,7 @@ const crypto = require("crypto");
 const { logAudit } = require("../../utils/audit");
 
 // --- CONFIG ---
-const ACCESS_TOKEN_EXPIRY = "24h";
+const ACCESS_TOKEN_EXPIRY = "15m";
 const REFRESH_TOKEN_EXPIRY = "7d";
 const LOCKOUT_LIMIT = 5;
 const LOCKOUT_DURATION_MINS = 15;

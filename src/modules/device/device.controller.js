@@ -195,7 +195,7 @@ exports.getPendingCommands = async (req, res) => {
 // 4.5. Device Command ACK (Device confirms it executed the command)
 exports.ackCommand = async (req, res) => {
     const { commandId } = req.params;
-    const { success, error_message, result_data } = req.body;
+    const { success, error_message, result_data, execution_time_ms } = req.body;
     const deviceId = req.user.id; // User is the DEVICE itself in this context
 
     try {
@@ -213,10 +213,13 @@ exports.ackCommand = async (req, res) => {
         if (success) {
             await pool.query(
                 `UPDATE commands 
-                 SET status = 'completed', acked_at = NOW(), payload = payload || $1::jsonb 
-                 WHERE id = $2`,
-                [JSON.stringify({ result_data }), commandId]
+                 SET status = 'completed', acked_at = NOW(), 
+                     execution_time_ms = $1,
+                     payload = payload || $2::jsonb 
+                 WHERE id = $3`,
+                [execution_time_ms || null, JSON.stringify({ result_data }), commandId]
             );
+            await logAudit(null, null, "COMMAND_ACKED", "DEVICE", deviceId, { command_id: commandId, execution_time_ms });
         } else {
             if (cmd.retry_count < cmd.max_retries) {
                 await pool.query(
@@ -232,6 +235,7 @@ exports.ackCommand = async (req, res) => {
                      WHERE id = $2`,
                     [JSON.stringify({ result_data, error_message, final_failure: true }), commandId]
                 );
+                await logAudit(null, null, "COMMAND_FAILED", "DEVICE", deviceId, { command_id: commandId, error_message });
             }
         }
 
@@ -370,22 +374,56 @@ exports.receiveHeartbeat = async (req, res) => {
     }
 };
 
-// 6. Status Normalization Job (Week 2 logic)
-// This runs in the background and marks devices as OFFLINE if silent for > 5 mins
+// 6. Status Normalization Job (Jayakumar Spec)
+// 3-state model: ONLINE (<90s), DEGRADED (<5 min), OFFLINE (>5 min)
 exports.startStatusJob = () => {
     setInterval(async () => {
         try {
-            await pool.query(
-                "UPDATE devices SET status = 'offline' WHERE last_seen < NOW() - INTERVAL '5 minutes' AND status = 'active'"
+            // Mark OFFLINE: no heartbeat for > 5 minutes
+            const offlineRes = await pool.query(
+                `UPDATE devices SET device_status = 'offline' 
+                 WHERE last_seen < NOW() - INTERVAL '5 minutes' 
+                 AND device_status != 'offline' 
+                 AND status = 'active'
+                 RETURNING id`
             );
+            // Audit log for devices going offline
+            if (offlineRes.rowCount > 0) {
+                for (const row of offlineRes.rows) {
+                    await logAudit(null, null, "DEVICE_OFFLINE", "DEVICE", row.id, { reason: "heartbeat_timeout" });
+                }
+            }
+
+            // Mark DEGRADED: no heartbeat for > 90 seconds but < 5 minutes
+            await pool.query(
+                `UPDATE devices SET device_status = 'degraded' 
+                 WHERE last_seen < NOW() - INTERVAL '90 seconds' 
+                 AND last_seen >= NOW() - INTERVAL '5 minutes'
+                 AND device_status != 'degraded'
+                 AND status = 'active'`
+            );
+
+            // Mark ONLINE: heartbeat within 90 seconds
+            const onlineRes = await pool.query(
+                `UPDATE devices SET device_status = 'online' 
+                 WHERE last_seen >= NOW() - INTERVAL '90 seconds' 
+                 AND device_status != 'online'
+                 AND status = 'active'
+                 RETURNING id`
+            );
+            // Audit log for devices coming online
+            if (onlineRes.rowCount > 0) {
+                for (const row of onlineRes.rows) {
+                    await logAudit(null, null, "DEVICE_ONLINE", "DEVICE", row.id, { reason: "heartbeat_received" });
+                }
+            }
         } catch (error) {
             console.error("Status Job Error:", error);
         }
     }, 60000); // Check every minute
 };
 
-// 6. Data Retention Cleanup Job (Week 3 logic)
-// Cleans up telemetry and audit logs older than 30 days
+// 6b. Data Retention Cleanup Job (Week 3 logic)
 exports.startCleanupJob = () => {
     setInterval(async () => {
         try {
@@ -397,19 +435,70 @@ exports.startCleanupJob = () => {
     }, 24 * 60 * 60 * 1000); // Run once every 24 hours
 };
 
-// 7. Command Expiry Job (Week 2 logic)
-// Cleans up stuck commands that have exceeded their 24hr expiration window
+// 7. Command Expiry Job (Jayakumar Spec: every 30 seconds)
 exports.startExpiryJob = () => {
     setInterval(async () => {
         try {
-            const res = await pool.query("UPDATE commands SET status = 'expired' WHERE status = 'queued' AND expires_at < NOW() RETURNING id");
+            const res = await pool.query(
+                `UPDATE commands SET status = 'expired' 
+                 WHERE status IN ('queued', 'sent') 
+                 AND expires_at < NOW() 
+                 RETURNING id`
+            );
             if (res.rowCount > 0) {
                 console.log(`⏳ Expired ${res.rowCount} stale device commands.`);
             }
         } catch (error) {
             console.error("Expiry Job Error:", error);
         }
-    }, 10 * 60 * 1000); // Check every 10 minutes
+    }, 30 * 1000); // Every 30 seconds per spec
+};
+
+// 8. Command Retry Job (Jayakumar Spec: every 1 minute)
+// Auto-retries commands that were SENT but never ACKed within 60 seconds
+exports.startRetryJob = () => {
+    setInterval(async () => {
+        try {
+            const res = await pool.query(
+                `UPDATE commands 
+                 SET status = 'queued', retry_count = retry_count + 1 
+                 WHERE status = 'sent' 
+                 AND sent_at < NOW() - INTERVAL '60 seconds'
+                 AND retry_count < max_retries
+                 RETURNING id, device_id, retry_count`
+            );
+            if (res.rowCount > 0) {
+                console.log(`🔄 Retried ${res.rowCount} unacknowledged commands.`);
+                for (const row of res.rows) {
+                    await logAudit(null, null, "COMMAND_RETRY", "DEVICE", row.device_id, { 
+                        command_id: row.id, 
+                        attempt: row.retry_count 
+                    });
+                }
+            }
+
+            // Mark commands that exceeded max retries as FAILED
+            const failedRes = await pool.query(
+                `UPDATE commands 
+                 SET status = 'failed', acked_at = NOW()
+                 WHERE status = 'sent'
+                 AND sent_at < NOW() - INTERVAL '60 seconds'
+                 AND retry_count >= max_retries
+                 RETURNING id, device_id`
+            );
+            if (failedRes.rowCount > 0) {
+                console.log(`❌ Failed ${failedRes.rowCount} commands (max retries exceeded).`);
+                for (const row of failedRes.rows) {
+                    await logAudit(null, null, "COMMAND_FAILED", "DEVICE", row.device_id, { 
+                        command_id: row.id, 
+                        reason: "max_retries_exceeded" 
+                    });
+                }
+            }
+        } catch (error) {
+            console.error("Retry Job Error:", error);
+        }
+    }, 60 * 1000); // Every 1 minute per spec
 };
 
 exports.updateDevice = async (req, res) => {
