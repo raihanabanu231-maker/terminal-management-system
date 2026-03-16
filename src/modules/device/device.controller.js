@@ -3,14 +3,9 @@ const crypto = require("crypto");
 const QRCode = require("qrcode");
 const { logAudit } = require("../../utils/audit");
 
-// 1. Generate Enrollment Token (Pre-Registration)
+// 1. Generate Enrollment Token (Jayakumar Spec - uses enrollment_tokens table)
 exports.generateEnrollmentToken = async (req, res) => {
-    const { serial, model, merchant_id, tenant_id } = req.body;
-
-    // A device serial is required to track the hardware
-    if (!serial) {
-        return res.status(400).json({ success: false, message: "Device serial number is required" });
-    }
+    const { merchant_id, device_profile_id, max_enrollments, expires_in_minutes, serial, model, tenant_id } = req.body;
 
     const finalTenantId = (req.user.role === "SUPER_ADMIN" && tenant_id)
         ? tenant_id
@@ -21,59 +16,121 @@ exports.generateEnrollmentToken = async (req, res) => {
     }
 
     try {
-        // If merchant_id is provided, verify it belongs to the same tenant
+        // Validate merchant exists if provided
         if (merchant_id) {
             const merchRes = await pool.query("SELECT id FROM merchants WHERE id = $1 AND tenant_id = $2", [merchant_id, finalTenantId]);
             if (merchRes.rows.length === 0) {
                 return res.status(404).json({ success: false, message: "Merchant not found or does not belong to this tenant" });
             }
         }
+
         const token = crypto.randomBytes(32).toString("hex");
         const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-        const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+        const maxEnroll = max_enrollments || 1;
+        const expiryMins = expires_in_minutes || 10;
+        const expiresAt = new Date(Date.now() + expiryMins * 60 * 1000);
 
-        // In the new schema, we store the hash of the enrollment token for security
+        // Store in enrollment_tokens table (Jayakumar Spec)
         await pool.query(
-            `INSERT INTO devices (serial, model, enrollment_token, merchant_id, tenant_id, status)
-             VALUES ($1, $2, $3, $4, $5, 'pending_onboard')
-             ON CONFLICT (serial) 
-             DO UPDATE SET enrollment_token = $3, status = 'pending_onboard'`,
-            [serial, model || 'Standard', tokenHash, merchant_id || null, finalTenantId]
+            `INSERT INTO enrollment_tokens (tenant_id, merchant_id, device_profile_id, token_hash, max_enrollments, remaining_enrollments, expires_at, created_by)
+             VALUES ($1, $2, $3, $4, $5, $5, $6, $7)`,
+            [finalTenantId, merchant_id || null, device_profile_id || null, tokenHash, maxEnroll, expiresAt, req.user.id]
         );
 
-        const qrData = JSON.stringify({ token: token, tenant_id: finalTenantId, serial: serial });
+        // Also create device record if serial is provided (backward compatible)
+        if (serial) {
+            await pool.query(
+                `INSERT INTO devices (serial, model, enrollment_token, merchant_id, tenant_id, status)
+                 VALUES ($1, $2, $3, $4, $5, 'pending_onboard')
+                 ON CONFLICT (serial) 
+                 DO UPDATE SET enrollment_token = $3, status = 'pending_onboard'`,
+                [serial, model || 'Standard', tokenHash, merchant_id || null, finalTenantId]
+            );
+        }
+
+        const qrData = JSON.stringify({ token: token, tenant_id: finalTenantId, serial: serial || null });
         const qrCodeImage = await QRCode.toDataURL(qrData);
 
         res.json({
             success: true,
             token: token,
             qr_code: qrCodeImage,
-            expires_at: expiresAt
+            expires_at: expiresAt,
+            max_enrollments: maxEnroll
         });
     } catch (error) {
         console.error("GENERATE ENROLLMENT TOKEN ERROR:", error);
-        res.status(500).json({ message: "Server error", detail: error.message });
+        res.status(500).json({ success: false, message: "Server error", detail: error.message });
     }
 };
 
-// 2. Enroll Device
+// 2. Enroll Device (Jayakumar Spec - uses enrollment_tokens + device_tokens tables)
 exports.enrollDevice = async (req, res) => {
-    const { token, serial } = req.body;
+    const { token, serial, enrollment_token, serial_number, device_model, os_version, agent_version, fingerprint } = req.body;
+
+    // Support both old field names and Sir's spec field names
+    const actualToken = token || enrollment_token;
+    const actualSerial = serial || serial_number;
+
+    if (!actualToken) {
+        return res.status(400).json({ success: false, message: "enrollment_token is required" });
+    }
 
     try {
-        const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+        const tokenHash = crypto.createHash('sha256').update(actualToken).digest('hex');
 
-        const result = await pool.query(
-            "SELECT * FROM devices WHERE enrollment_token = $1 AND status = 'pending_onboard'",
+        // Step 1: Validate enrollment token from enrollment_tokens table
+        const enrollTokenRes = await pool.query(
+            `SELECT * FROM enrollment_tokens 
+             WHERE token_hash = $1 
+             AND expires_at > NOW() 
+             AND remaining_enrollments > 0`,
             [tokenHash]
         );
 
-        if (result.rows.length === 0) {
-            return res.status(400).json({ success: false, message: "Invalid token" });
+        let enrollmentRecord = null;
+        let device = null;
+
+        if (enrollTokenRes.rows.length > 0) {
+            // New flow: enrollment_tokens table
+            enrollmentRecord = enrollTokenRes.rows[0];
+
+            // Decrement remaining enrollments
+            await pool.query(
+                "UPDATE enrollment_tokens SET remaining_enrollments = remaining_enrollments - 1 WHERE id = $1",
+                [enrollmentRecord.id]
+            );
+
+            // Create or update device record
+            if (actualSerial) {
+                const deviceRes = await pool.query(
+                    `INSERT INTO devices (serial, model, tenant_id, merchant_id, status, device_status)
+                     VALUES ($1, $2, $3, $4, 'active', 'online')
+                     ON CONFLICT (serial) 
+                     DO UPDATE SET status = 'active', device_status = 'online', last_seen = NOW()
+                     RETURNING *`,
+                    [actualSerial, device_model || 'Standard', enrollmentRecord.tenant_id, enrollmentRecord.merchant_id]
+                );
+                device = deviceRes.rows[0];
+            }
+        } else {
+            // Fallback: old flow using devices table directly
+            const result = await pool.query(
+                "SELECT * FROM devices WHERE enrollment_token = $1 AND status = 'pending_onboard'",
+                [tokenHash]
+            );
+
+            if (result.rows.length === 0) {
+                return res.status(400).json({ success: false, message: "Invalid or expired enrollment token" });
+            }
+            device = result.rows[0];
         }
 
-        const device = result.rows[0];
+        if (!device) {
+            return res.status(400).json({ success: false, message: "Could not create device. Serial number required." });
+        }
 
+        // Step 2: Generate Device JWT
         const jwt = require("jsonwebtoken");
         const deviceToken = jwt.sign(
             { id: device.id, role: "DEVICE", tenant_id: device.tenant_id },
@@ -82,9 +139,11 @@ exports.enrollDevice = async (req, res) => {
 
         const deviceTokenHash = crypto.createHash('sha256').update(deviceToken).digest('hex');
 
+        // Step 3: Update device record
         await pool.query(
             `UPDATE devices 
              SET status = 'active', 
+                 device_status = 'online',
                  enrollment_token = NULL, 
                  enrollment_token_used = $1, 
                  device_token_hash = $2, 
@@ -93,16 +152,28 @@ exports.enrollDevice = async (req, res) => {
             [tokenHash, deviceTokenHash, device.id]
         );
 
-        await logAudit(device.tenant_id, null, "device.enroll", "DEVICE", device.id, { serial: device.serial });
+        // Step 4: Store in device_tokens table (Jayakumar Spec)
+        await pool.query(
+            `INSERT INTO device_tokens (device_id, token_hash, issued_at)
+             VALUES ($1, $2, NOW())`,
+            [device.id, deviceTokenHash]
+        );
 
+        // Step 5: Audit logs
+        await logAudit(device.tenant_id, null, "DEVICE_ENROLLED", "DEVICE", device.id, { serial: actualSerial });
+        await logAudit(device.tenant_id, null, "DEVICE_TOKEN_CREATED", "DEVICE", device.id, { serial: actualSerial });
+
+        // Step 6: Return response (Jayakumar Spec format)
         res.json({
             success: true,
-            device_token: deviceToken
+            device_id: device.id,
+            device_token: deviceToken,
+            heartbeat_interval: 30
         });
 
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: "Server error" });
+        console.error("ENROLL DEVICE ERROR:", error);
+        res.status(500).json({ success: false, message: "Server error", detail: error.message });
     }
 };
 
