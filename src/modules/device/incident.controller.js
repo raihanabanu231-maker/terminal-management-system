@@ -69,9 +69,11 @@ exports.getIncidents = async (req, res) => {
 
     try {
         let query = `
-             SELECT i.*, d.serial, d.model 
+             SELECT i.*, d.serial, d.model, t.name as tenant_name, m.name as merchant_name 
              FROM device_incidents i
              JOIN devices d ON i.device_id = d.id
+             JOIN tenants t ON i.tenant_id = t.id
+             LEFT JOIN merchants m ON i.merchant_id = m.id
         `;
         const params = [];
 

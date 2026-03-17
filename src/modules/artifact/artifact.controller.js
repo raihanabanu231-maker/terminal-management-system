@@ -129,9 +129,15 @@ exports.getArtifacts = async (req, res) => {
             query += ` AND a.artifact_type = $${params.length}`;
         }
 
-        query += " ORDER BY a.created_at DESC";
+        let finalQuery = `
+            SELECT a.*, u.email as created_by_email, t.name as tenant_name
+            FROM (${query}) a
+            JOIN tenants t ON a.tenant_id = t.id
+            LEFT JOIN users u ON a.created_by = u.id
+            ORDER BY a.created_at DESC
+        `;
 
-        const result = await pool.query(query, params);
+        const result = await pool.query(finalQuery, params);
 
         res.json({
             success: true,
@@ -150,8 +156,9 @@ exports.getArtifactById = async (req, res) => {
 
     try {
         const artifactRes = await pool.query(
-            `SELECT a.*, u.email as created_by_email 
+            `SELECT a.*, u.email as created_by_email, t.name as tenant_name
              FROM artifacts a 
+             JOIN tenants t ON a.tenant_id = t.id
              LEFT JOIN users u ON a.created_by = u.id 
              WHERE a.id = $1 AND a.deleted_at IS NULL`,
             [id]

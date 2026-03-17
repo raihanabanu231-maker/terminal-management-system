@@ -51,12 +51,24 @@ exports.generateEnrollmentToken = async (req, res) => {
         const qrData = JSON.stringify({ token: token, tenant_id: finalTenantId, serial: serial || null });
         const qrCodeImage = await QRCode.toDataURL(qrData);
 
+        // Fetch names for UI feedback
+        const tenantRes = await pool.query("SELECT name FROM tenants WHERE id = $1", [finalTenantId]);
+        const tenantName = tenantRes.rows[0]?.name || "Unknown";
+        
+        let merchantName = null;
+        if (merchant_id) {
+            const merchRes = await pool.query("SELECT name FROM merchants WHERE id = $1", [merchant_id]);
+            merchantName = merchRes.rows[0]?.name || "Unknown";
+        }
+
         res.json({
             success: true,
             token: token,
             qr_code: qrCodeImage,
             expires_at: expiresAt,
-            max_enrollments: maxEnroll
+            max_enrollments: maxEnroll,
+            tenant_name: tenantName,
+            merchant_name: merchantName
         });
     } catch (error) {
         console.error("GENERATE ENROLLMENT TOKEN ERROR:", error);

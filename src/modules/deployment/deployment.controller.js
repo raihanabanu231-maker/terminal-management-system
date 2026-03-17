@@ -136,12 +136,20 @@ exports.getDeployments = async (req, res) => {
 
     try {
         let query = `SELECT d.*, a.name as artifact_name, a.version as artifact_version, a.artifact_type,
-                      u.email as created_by_email,
+                      u.email as created_by_email, t.name as tenant_name,
+                      CASE 
+                        WHEN d.target_type = 'merchant' THEN (SELECT name FROM merchants WHERE id = d.target_id)
+                        WHEN d.target_type = 'device' THEN (SELECT serial FROM devices WHERE id = d.target_id)
+                        WHEN d.target_type = 'tenant' THEN (SELECT name FROM tenants WHERE id = d.target_id)
+                        WHEN d.target_type = 'device_group' THEN 'Device Group'
+                        ELSE 'Unknown'
+                      END as target_name,
                       (SELECT COUNT(*) FROM deployment_targets dt WHERE dt.deployment_id = d.id) as total_targets,
                       (SELECT COUNT(*) FROM deployment_targets dt WHERE dt.deployment_id = d.id AND dt.status = 'completed') as completed_targets,
                       (SELECT COUNT(*) FROM deployment_targets dt WHERE dt.deployment_id = d.id AND dt.status = 'failed') as failed_targets
                      FROM deployments d
                      JOIN artifacts a ON d.artifact_id = a.id
+                     JOIN tenants t ON d.tenant_id = t.id
                      LEFT JOIN users u ON d.created_by = u.id
                      WHERE 1=1`;
         const params = [];
@@ -177,9 +185,17 @@ exports.getDeploymentById = async (req, res) => {
 
     try {
         const deployRes = await pool.query(
-            `SELECT d.*, a.name as artifact_name, a.version as artifact_version, a.artifact_type, a.file_url, a.file_hash
+            `SELECT d.*, a.name as artifact_name, a.version as artifact_version, a.artifact_type, a.file_url, a.file_hash, t.name as tenant_name,
+                    CASE 
+                        WHEN d.target_type = 'merchant' THEN (SELECT name FROM merchants WHERE id = d.target_id)
+                        WHEN d.target_type = 'device' THEN (SELECT serial FROM devices WHERE id = d.target_id)
+                        WHEN d.target_type = 'tenant' THEN (SELECT name FROM tenants WHERE id = d.target_id)
+                        WHEN d.target_type = 'device_group' THEN 'Device Group'
+                        ELSE 'Unknown'
+                    END as target_name
              FROM deployments d
              JOIN artifacts a ON d.artifact_id = a.id
+             JOIN tenants t ON d.tenant_id = t.id
              WHERE d.id = $1`,
             [id]
         );
