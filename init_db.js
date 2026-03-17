@@ -232,22 +232,6 @@ async function initDB() {
       );
     `);
 
-    // 15. Artifacts
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS artifacts (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-        name TEXT NOT NULL,
-        version TEXT NOT NULL,
-        type TEXT NOT NULL CHECK (type IN ('app', 'firmware')),
-        binary_path TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'draft',
-        approved_by UUID REFERENCES users(id) ON DELETE SET NULL,
-        approved_at TIMESTAMPTZ,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-    `);
-
     // 16. Device Incidents
     await client.query(`
       CREATE TABLE IF NOT EXISTS device_incidents (
@@ -429,6 +413,18 @@ async function initDB() {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         deleted_at TIMESTAMPTZ
       );
+    `);
+
+    // Migration for older local databases that had the wrong artifact columns
+    await client.query(`
+      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS artifact_type TEXT;
+      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS file_url TEXT;
+      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS file_hash TEXT;
+      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS file_size BIGINT;
+      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS min_device_version TEXT;
+      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES users(id) ON DELETE SET NULL;
+      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
     `);
 
     // 24. Artifact Approvals (PCI / Enterprise Audit Compliance)
