@@ -425,6 +425,10 @@ async function initDB() {
       ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES users(id) ON DELETE SET NULL;
       ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
       ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+      
+      -- Cleanup old columns if they exist
+      ALTER TABLE artifacts ALTER COLUMN type DROP NOT NULL;
+      ALTER TABLE artifacts ALTER COLUMN binary_path DROP NOT NULL;
     `);
 
     // 24. Artifact Approvals (PCI / Enterprise Audit Compliance)
