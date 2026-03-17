@@ -1,126 +1,207 @@
 const pool = require("../../config/db");
-const { sendCommand } = require("../../gateway/socket.gateway");
+const crypto = require("crypto");
 const { logAudit } = require("../../utils/audit");
-const fs = require("fs");
-const path = require("path");
 
-const gernateMockPresignedUrl = (filepath) => {
-    return `http://localhost:5000${filepath}?token=mock_signed_token`;
-};
+// 1. Create Artifact (Step 2 in Sir's spec)
+exports.createArtifact = async (req, res) => {
+    const { name, version, artifact_type, file_url, file_hash, file_size, min_device_version } = req.body;
 
-// 1. Upload Artifact (Draft)
-exports.uploadArtifact = async (req, res) => {
-    const { version, name, type } = req.body; // type: 'app' or 'firmware'
-    const tenant_id = (req.user.role === "SUPER_ADMIN" && req.body.tenant_id)
-        ? req.body.tenant_id
-        : req.user.tenant_id;
-
-    if (!tenant_id) {
-        return res.status(400).json({ success: false, message: "tenant_id is required" });
+    if (!name || !version || !artifact_type) {
+        return res.status(400).json({ success: false, message: "name, version, and artifact_type are required" });
     }
-    const file = req.file;
 
-    if (!file) {
-        return res.status(400).json({ success: false, message: "No file uploaded" });
-    }
+    const tenantId = req.user.role === "SUPER_ADMIN" ? (req.body.tenant_id || req.user.tenant_id) : req.user.tenant_id;
 
     try {
-        const binaryPath = `/uploads/${file.filename}`;
-
         const result = await pool.query(
-            `INSERT INTO artifacts (tenant_id, name, version, type, binary_path, status, created_by)
-             VALUES ($1, $2, $3, $4, $5, 'draft', $6)
+            `INSERT INTO artifacts (tenant_id, name, version, artifact_type, file_url, file_hash, file_size, min_device_version, created_by, status)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'draft')
              RETURNING *`,
-            [tenant_id, name, version, type || 'app', binaryPath, req.user.id]
+            [tenantId, name, version, artifact_type, file_url || null, file_hash || null, file_size || null, min_device_version || null, req.user.id]
         );
 
-        await logAudit(tenant_id, req.user.id, "artifact.upload", "ARTIFACT", result.rows[0].id, { name, version });
+        await logAudit(tenantId, req.user.id, "ARTIFACT_CREATED", "ARTIFACT", result.rows[0].id, { name, version, artifact_type });
 
         res.status(201).json({
             success: true,
-            message: "Artifact uploaded as Draft",
+            message: "Artifact created in draft status",
             artifact: result.rows[0]
         });
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: "Server error" });
+        console.error("CREATE_ARTIFACT_ERROR:", error);
+        res.status(500).json({ success: false, message: "Server error", detail: error.message });
     }
 };
 
-// 2. Approve Artifact (Publish)
+// 2. Upload Artifact File (Step 1 in Sir's spec)
+// For MVP: stores file_url directly. In production: integrate with S3/GCS.
+exports.uploadArtifact = async (req, res) => {
+    const { file_url, file_name } = req.body;
+
+    if (!file_url) {
+        return res.status(400).json({ success: false, message: "file_url is required" });
+    }
+
+    try {
+        // Calculate hash from URL (in production, hash the actual file bytes)
+        const fileHash = crypto.createHash('sha256').update(file_url + Date.now()).digest('hex');
+
+        res.json({
+            success: true,
+            message: "File registered successfully",
+            file_url: file_url,
+            file_hash: fileHash,
+            file_name: file_name || "artifact"
+        });
+    } catch (error) {
+        console.error("UPLOAD_ARTIFACT_ERROR:", error);
+        res.status(500).json({ success: false, message: "Server error", detail: error.message });
+    }
+};
+
+// 3. Approve Artifact (Step 3 in Sir's spec)
 exports.approveArtifact = async (req, res) => {
+    const { id } = req.params;
+    const { notes } = req.body;
+
+    try {
+        // Verify artifact exists and is in draft status
+        const artifactRes = await pool.query(
+            "SELECT * FROM artifacts WHERE id = $1 AND deleted_at IS NULL",
+            [id]
+        );
+
+        if (artifactRes.rows.length === 0) {
+            return res.status(404).json({ success: false, message: "Artifact not found" });
+        }
+
+        const artifact = artifactRes.rows[0];
+
+        if (artifact.status === 'approved') {
+            return res.status(400).json({ success: false, message: "Artifact is already approved" });
+        }
+
+        // Create approval record
+        await pool.query(
+            `INSERT INTO artifact_approvals (artifact_id, approved_by, notes)
+             VALUES ($1, $2, $3)`,
+            [id, req.user.id, notes || null]
+        );
+
+        // Update artifact status
+        await pool.query(
+            "UPDATE artifacts SET status = 'approved', updated_at = NOW() WHERE id = $1",
+            [id]
+        );
+
+        await logAudit(artifact.tenant_id, req.user.id, "ARTIFACT_APPROVED", "ARTIFACT", id, { name: artifact.name, version: artifact.version });
+
+        res.json({
+            success: true,
+            message: "Artifact approved and ready for deployment"
+        });
+    } catch (error) {
+        console.error("APPROVE_ARTIFACT_ERROR:", error);
+        res.status(500).json({ success: false, message: "Server error", detail: error.message });
+    }
+};
+
+// 4. List Artifacts
+exports.getArtifacts = async (req, res) => {
+    const { status, artifact_type } = req.query;
+
+    try {
+        let query = "SELECT a.*, u.email as created_by_email FROM artifacts a LEFT JOIN users u ON a.created_by = u.id WHERE a.deleted_at IS NULL";
+        const params = [];
+
+        if (req.user.role !== "SUPER_ADMIN") {
+            params.push(req.user.tenant_id);
+            query += ` AND a.tenant_id = $${params.length}`;
+        }
+
+        if (status) {
+            params.push(status);
+            query += ` AND a.status = $${params.length}`;
+        }
+
+        if (artifact_type) {
+            params.push(artifact_type);
+            query += ` AND a.artifact_type = $${params.length}`;
+        }
+
+        query += " ORDER BY a.created_at DESC";
+
+        const result = await pool.query(query, params);
+
+        res.json({
+            success: true,
+            total: result.rowCount,
+            data: result.rows
+        });
+    } catch (error) {
+        console.error("GET_ARTIFACTS_ERROR:", error);
+        res.status(500).json({ success: false, message: "Server error", detail: error.message });
+    }
+};
+
+// 5. Get Single Artifact
+exports.getArtifactById = async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        const artifactRes = await pool.query(
+            `SELECT a.*, u.email as created_by_email 
+             FROM artifacts a 
+             LEFT JOIN users u ON a.created_by = u.id 
+             WHERE a.id = $1 AND a.deleted_at IS NULL`,
+            [id]
+        );
+
+        if (artifactRes.rows.length === 0) {
+            return res.status(404).json({ success: false, message: "Artifact not found" });
+        }
+
+        // Get approval history
+        const approvalsRes = await pool.query(
+            `SELECT aa.*, u.email as approved_by_email 
+             FROM artifact_approvals aa 
+             LEFT JOIN users u ON aa.approved_by = u.id 
+             WHERE aa.artifact_id = $1 ORDER BY aa.approved_at DESC`,
+            [id]
+        );
+
+        res.json({
+            success: true,
+            data: {
+                ...artifactRes.rows[0],
+                approvals: approvalsRes.rows
+            }
+        });
+    } catch (error) {
+        console.error("GET_ARTIFACT_ERROR:", error);
+        res.status(500).json({ success: false, message: "Server error", detail: error.message });
+    }
+};
+
+// 6. Deprecate Artifact
+exports.deprecateArtifact = async (req, res) => {
     const { id } = req.params;
 
     try {
         const result = await pool.query(
-            "UPDATE artifacts SET status = 'published', approved_by = $1, approved_at = NOW() WHERE id = $2 RETURNING *",
-            [req.user.id, id]
+            "UPDATE artifacts SET status = 'deprecated', updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING *",
+            [id]
         );
 
-        if (result.rows.length === 0) {
-            return res.status(404).json({ message: "Artifact not found" });
+        if (result.rowCount === 0) {
+            return res.status(404).json({ success: false, message: "Artifact not found" });
         }
 
-        const artifact = result.rows[0];
-        await logAudit(artifact.tenant_id, req.user.id, "artifact.publish", "ARTIFACT", id, { status: 'published' });
+        await logAudit(result.rows[0].tenant_id, req.user.id, "ARTIFACT_DEPRECATED", "ARTIFACT", id, { name: result.rows[0].name });
 
-        res.json({ success: true, message: "Artifact Published" });
+        res.json({ success: true, message: "Artifact deprecated successfully" });
     } catch (error) {
-        res.status(500).json({ message: "Server error" });
-    }
-};
-
-// 3. Deploy Artifact
-exports.deployArtifact = async (req, res) => {
-    const { id } = req.params;
-    const { deviceIds } = req.body;
-
-    if (!deviceIds || !Array.isArray(deviceIds)) {
-        return res.status(400).json({ success: false, message: "deviceIds array required" });
-    }
-
-    try {
-        // Fetch Artifact
-        const artRes = await pool.query("SELECT * FROM artifacts WHERE id = $1", [id]);
-        if (artRes.rows.length === 0) {
-            return res.status(404).json({ message: "Artifact not found" });
-        }
-        const artifact = artRes.rows[0];
-
-        if (artifact.status !== 'published') {
-            return res.status(400).json({ message: "Artifact must be published to deploy" });
-        }
-
-        const downloadUrl = gernateMockPresignedUrl(artifact.binary_path);
-        const results = [];
-
-        for (const deviceId of deviceIds) {
-            const cmdRes = await pool.query(
-                `INSERT INTO commands (device_id, type, payload, status, created_by)
-                 VALUES ($1, 'install_app', $2, 'queued', $3) RETURNING id`,
-                [deviceId, { url: downloadUrl, artifact_id: artifact.id }, req.user.id]
-            );
-            const cmdId = cmdRes.rows[0].id;
-
-            const sent = sendCommand(deviceId, {
-                type: "command",
-                id: cmdId,
-                cmd: "install_app",
-                url: downloadUrl,
-                artifact_id: artifact.id
-            });
-
-            if (sent) {
-                await pool.query("UPDATE commands SET status = 'sent', sent_at = NOW() WHERE id = $1", [cmdId]);
-            }
-
-            results.push({ deviceId, cmdId, status: sent ? 'sent' : 'queued' });
-        }
-
-        res.json({ success: true, message: "Deployment Commands Sent", results });
-
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: "Server error" });
+        console.error("DEPRECATE_ARTIFACT_ERROR:", error);
+        res.status(500).json({ success: false, message: "Server error", detail: error.message });
     }
 };

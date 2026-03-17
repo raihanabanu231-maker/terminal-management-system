@@ -409,6 +409,90 @@ async function initDB() {
       CREATE INDEX IF NOT EXISTS idx_devices_last_seen ON devices(last_seen, status);
     `);
 
+    // --- Artifact Management System (Jayakumar Spec) ---
+
+    // 23. Artifacts (APKs, firmware, configs, patches)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS artifacts (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        version TEXT NOT NULL,
+        artifact_type TEXT NOT NULL,
+        file_url TEXT,
+        file_hash TEXT,
+        file_size BIGINT,
+        min_device_version TEXT,
+        created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        status TEXT NOT NULL DEFAULT 'draft',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        deleted_at TIMESTAMPTZ
+      );
+    `);
+
+    // 24. Artifact Approvals (PCI / Enterprise Audit Compliance)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS artifact_approvals (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        artifact_id UUID NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+        approved_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        approved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        notes TEXT
+      );
+    `);
+
+    // --- Deployment Engine (Jayakumar Spec) ---
+
+    // 25. Deployments
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS deployments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        artifact_id UUID NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+        deployment_strategy TEXT NOT NULL DEFAULT 'immediate',
+        target_type TEXT NOT NULL,
+        target_id UUID NOT NULL,
+        rollout_percentage INTEGER NOT NULL DEFAULT 100,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    // 26. Deployment Targets (individual device tracking)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS deployment_targets (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        deployment_id UUID NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+        device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    // 27. Deployment Events (device progress tracking)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS deployment_events (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        deployment_id UUID NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+        device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        event_type TEXT NOT NULL,
+        event_payload JSONB DEFAULT '{}',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    // Artifact + Deployment Indexes
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_artifacts_tenant ON artifacts(tenant_id, status);
+      CREATE INDEX IF NOT EXISTS idx_artifact_approvals ON artifact_approvals(artifact_id);
+      CREATE INDEX IF NOT EXISTS idx_deployments_tenant ON deployments(tenant_id, status);
+      CREATE INDEX IF NOT EXISTS idx_deployment_targets_deploy ON deployment_targets(deployment_id, status);
+      CREATE INDEX IF NOT EXISTS idx_deployment_targets_device ON deployment_targets(device_id, status);
+      CREATE INDEX IF NOT EXISTS idx_deployment_events ON deployment_events(deployment_id, device_id);
+    `);
+
     // Seed Initial Roles (System Level)
     await client.query(`
       INSERT INTO roles (tenant_id, name, permissions)

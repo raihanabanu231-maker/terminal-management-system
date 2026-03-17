@@ -1,36 +1,62 @@
 const express = require("express");
 const router = express.Router();
-const multer = require("multer");
+const {
+    createArtifact,
+    uploadArtifact,
+    approveArtifact,
+    getArtifacts,
+    getArtifactById,
+    deprecateArtifact
+} = require("./artifact.controller");
 const { verifyToken } = require("../../middleware/auth.middleware");
 const { authorizeRoles } = require("../../middleware/role.middleware");
-const { uploadArtifact, approveArtifact, deployArtifact } = require("./artifact.controller");
 
-const path = require("path");
-const upload = multer({ dest: path.join(__dirname, "../../../uploads") });
+// List Artifacts
+router.get(
+    "/",
+    verifyToken,
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR", "VIEWER"),
+    getArtifacts
+);
 
-// 1. Upload Draft (Super Admin Only)
+// Upload Artifact File (Step 1)
 router.post(
     "/upload",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN"),
-    upload.single("file"),
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN"),
     uploadArtifact
 );
 
-// 2. Publish Artifact (Super Admin Only)
+// Create Artifact Metadata (Step 2)
 router.post(
-    "/:id/publish",
+    "/",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN"),
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN"),
+    createArtifact
+);
+
+// Approve Artifact (Step 3) — must come before /:id
+router.post(
+    "/:id/approve",
+    verifyToken,
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN"),
     approveArtifact
 );
 
-// 3. Deploy Artifact (Super Admin Only)
+// Deprecate Artifact
 router.post(
-    "/:id/deploy",
+    "/:id/deprecate",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN"),
-    deployArtifact
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN"),
+    deprecateArtifact
+);
+
+// Get Single Artifact (must be last dynamic route)
+router.get(
+    "/:id",
+    verifyToken,
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR", "VIEWER"),
+    getArtifactById
 );
 
 module.exports = router;

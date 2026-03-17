@@ -11,6 +11,7 @@ const tenantRoutes = require("./modules/tenant/tenant.routes");
 const merchantRoutes = require("./modules/merchant/merchant.routes");
 const deviceRoutes = require("./modules/device/device.routes");
 const artifactRoutes = require("./modules/artifact/artifact.routes");
+const deploymentRoutes = require("./modules/deployment/deployment.routes");
 const dashboardRoutes = require("./modules/dashboard/dashboard.routes");
 const auditRoutes = require("./modules/audit/audit.routes");
 
@@ -59,6 +60,7 @@ app.use(`${API_V1}/tenants`, tenantRoutes);
 app.use(`${API_V1}/merchants`, merchantRoutes);
 app.use(`${API_V1}/devices`, deviceRoutes);
 app.use(`${API_V1}/artifacts`, artifactRoutes);
+app.use(`${API_V1}/deployments`, deploymentRoutes);
 app.use(`${API_V1}/dashboard`, dashboardRoutes);
 app.use(`${API_V1}/audit`, auditRoutes);
 
