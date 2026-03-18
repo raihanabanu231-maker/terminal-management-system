@@ -141,6 +141,21 @@ async function initDB() {
       );
     `);
 
+    // 8. Device Enrollment Tokens
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS device_enrollment_tokens (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        merchant_id UUID NOT NULL REFERENCES merchants(id) ON DELETE CASCADE,
+        device_id UUID REFERENCES devices(id) ON DELETE SET NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TIMESTAMPTZ NOT NULL,
+        used_at TIMESTAMPTZ,
+        created_by UUID REFERENCES users(id),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
     // 8. Entitlements
     await client.query(`
       CREATE TABLE IF NOT EXISTS entitlements (
@@ -179,6 +194,10 @@ async function initDB() {
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         serial TEXT NOT NULL UNIQUE,
         model TEXT NOT NULL,
+        manufacturer TEXT,
+        os_type TEXT NOT NULL DEFAULT 'android',
+        os_version TEXT NOT NULL DEFAULT 'unknown',
+        capabilities JSONB NOT NULL DEFAULT '{}',
         tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
         merchant_id UUID REFERENCES merchants(id) ON DELETE SET NULL,
         profile_id UUID REFERENCES device_profiles(id) ON DELETE SET NULL,
@@ -186,9 +205,12 @@ async function initDB() {
         last_seen TIMESTAMPTZ,
         last_location GEOGRAPHY(POINT, 4326),
         device_token_hash TEXT,
+        token_version INTEGER NOT NULL DEFAULT 1,
         enrollment_token_used TEXT,
         token_issued_at TIMESTAMPTZ DEFAULT NOW(),
         token_revoked_at TIMESTAMPTZ,
+        enrollment_attempts INTEGER DEFAULT 0,
+        last_enrollment_attempt TIMESTAMPTZ,
         deleted_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
@@ -222,11 +244,11 @@ async function initDB() {
         type TEXT NOT NULL,
         payload JSONB NOT NULL DEFAULT '{}',
         status TEXT NOT NULL DEFAULT 'queued',
+        retry_count INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        expires_at TIMESTAMPTZ,
         sent_at TIMESTAMPTZ,
         acked_at TIMESTAMPTZ,
-        expires_at TIMESTAMPTZ,
-        retry_count INTEGER NOT NULL DEFAULT 0,
-        max_retries INTEGER NOT NULL DEFAULT 3,
         created_by UUID REFERENCES users(id) ON DELETE SET NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
@@ -296,9 +318,10 @@ async function initDB() {
         user_id UUID REFERENCES users(id) ON DELETE SET NULL,
         action TEXT NOT NULL,
         resource_type TEXT NOT NULL,
-        resource_id UUID,
+        resource_id UUID NOT NULL,
         old_values JSONB,
         new_values JSONB NOT NULL,
+        checksum TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
@@ -403,32 +426,18 @@ async function initDB() {
         name TEXT NOT NULL,
         version TEXT NOT NULL,
         artifact_type TEXT NOT NULL,
-        file_url TEXT,
+        file_url TEXT NOT NULL,
         file_hash TEXT,
         file_size BIGINT,
         min_device_version TEXT,
-        created_by UUID REFERENCES users(id) ON DELETE SET NULL,
         status TEXT NOT NULL DEFAULT 'draft',
+        approved_by UUID REFERENCES users(id),
+        approved_at TIMESTAMPTZ,
+        created_by UUID REFERENCES users(id) ON DELETE SET NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         deleted_at TIMESTAMPTZ
       );
-    `);
-
-    // Migration for older local databases that had the wrong artifact columns
-    await client.query(`
-      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS artifact_type TEXT;
-      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS file_url TEXT;
-      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS file_hash TEXT;
-      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS file_size BIGINT;
-      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS min_device_version TEXT;
-      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES users(id) ON DELETE SET NULL;
-      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
-      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
-      
-      -- Cleanup old columns if they exist
-      ALTER TABLE artifacts ALTER COLUMN type DROP NOT NULL;
-      ALTER TABLE artifacts ALTER COLUMN binary_path DROP NOT NULL;
     `);
 
     // 24. Artifact Approvals (PCI / Enterprise Audit Compliance)
@@ -451,11 +460,11 @@ async function initDB() {
         tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
         artifact_id UUID NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
         deployment_strategy TEXT NOT NULL DEFAULT 'immediate',
-        target_type TEXT NOT NULL,
+        target_type TEXT NOT NULL CHECK (target_type IN ('device', 'group', 'merchant', 'tenant', 'device_group')),
         target_id UUID NOT NULL,
         rollout_percentage INTEGER NOT NULL DEFAULT 100,
         status TEXT NOT NULL DEFAULT 'pending',
-        created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_by UUID REFERENCES users(id),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
@@ -480,6 +489,88 @@ async function initDB() {
         event_type TEXT NOT NULL,
         event_payload JSONB DEFAULT '{}',
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    // FINAL CONSOLIDATED SCHEMA MIGRATION (Clean and Safe)
+    await client.query(`
+      -- 1. Devices: metadata and scale columns
+      ALTER TABLE devices ADD COLUMN IF NOT EXISTS manufacturer TEXT;
+      ALTER TABLE devices ADD COLUMN IF NOT EXISTS os_type TEXT NOT NULL DEFAULT 'android';
+      ALTER TABLE devices ADD COLUMN IF NOT EXISTS os_version TEXT NOT NULL DEFAULT 'unknown';
+      ALTER TABLE devices ADD COLUMN IF NOT EXISTS capabilities JSONB NOT NULL DEFAULT '{}';
+      ALTER TABLE devices ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE devices ADD COLUMN IF NOT EXISTS enrollment_attempts INTEGER DEFAULT 0;
+      ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_enrollment_attempt TIMESTAMPTZ;
+
+      -- 2. Artifacts: Structural alignment (Sir Flow)
+      DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='artifacts' AND column_name='type') 
+           AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='artifacts' AND column_name='artifact_type') THEN
+          ALTER TABLE artifacts RENAME COLUMN type TO artifact_type;
+        END IF;
+        
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='artifacts' AND column_name='binary_path') 
+           AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='artifacts' AND column_name='file_url') THEN
+          ALTER TABLE artifacts RENAME COLUMN binary_path TO file_url;
+        END IF;
+
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='artifacts' AND column_name='file_url') THEN
+           ALTER TABLE artifacts ALTER COLUMN file_url DROP NOT NULL;
+        END IF;
+      END $$;
+      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS file_hash TEXT;
+      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS file_size BIGINT;
+      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS min_device_version TEXT;
+      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS approved_by UUID REFERENCES users(id);
+      ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
+
+      -- 3. Deployments: Table renaming and tracking (Sir Flow)
+      DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='artifact_deployments') AND NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='deployments') THEN
+          ALTER TABLE artifact_deployments RENAME TO deployments;
+        END IF;
+      END $$;
+      ALTER TABLE deployments ADD COLUMN IF NOT EXISTS deployment_strategy TEXT DEFAULT 'immediate';
+      ALTER TABLE deployments ADD COLUMN IF NOT EXISTS rollout_percentage INTEGER DEFAULT 100;
+
+      -- 4. Audit & Reliability
+      ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS checksum TEXT;
+      ALTER TABLE commands ADD COLUMN IF NOT EXISTS last_error TEXT;
+
+      -- 5. Helper Tables (Heartbeats, Metrics, Jobs)
+      CREATE TABLE IF NOT EXISTS device_heartbeats (
+        device_id UUID PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+        last_seen TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS data_retention_policies (
+        entity TEXT PRIMARY KEY,
+        retention_days INTEGER NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS system_metrics_snapshots (
+        tenant_id UUID NOT NULL REFERENCES tenants(id),
+        snapshot_time TIMESTAMPTZ NOT NULL,
+        total_devices INTEGER,
+        online_devices INTEGER,
+        open_incidents INTEGER,
+        pending_commands INTEGER,
+        PRIMARY KEY (tenant_id, snapshot_time)
+      );
+
+      CREATE TABLE IF NOT EXISTS background_jobs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        job_type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        run_at TIMESTAMPTZ NOT NULL,
+        locked_by TEXT,
+        locked_at TIMESTAMPTZ,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
 

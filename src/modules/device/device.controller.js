@@ -31,11 +31,13 @@ exports.generateEnrollmentToken = async (req, res) => {
         const expiresAt = new Date(Date.now() + expiryMins * 60 * 1000);
 
         // Store in enrollment_tokens table (Jayakumar Spec)
-        await pool.query(
+        const tokenRes = await pool.query(
             `INSERT INTO enrollment_tokens (tenant_id, merchant_id, device_profile_id, token_hash, max_enrollments, remaining_enrollments, expires_at, created_by)
-             VALUES ($1, $2, $3, $4, $5, $5, $6, $7)`,
+             VALUES ($1, $2, $3, $4, $5, $5, $6, $7)
+             RETURNING id`,
             [finalTenantId, merchant_id || null, device_profile_id || null, tokenHash, maxEnroll, expiresAt, req.user.id]
         );
+        const tokenId = tokenRes.rows[0].id;
 
         // Also create device record if serial is provided (backward compatible)
         if (serial) {
@@ -63,6 +65,7 @@ exports.generateEnrollmentToken = async (req, res) => {
 
         res.json({
             success: true,
+            token_id: tokenId,
             token: token,
             qr_code: qrCodeImage,
             expires_at: expiresAt,
@@ -178,6 +181,7 @@ exports.enrollDevice = async (req, res) => {
         // Step 6: Return response (Jayakumar Spec format)
         res.json({
             success: true,
+            message: "Device Enrolled Successfully",
             device_id: device.id,
             device_token: deviceToken,
             heartbeat_interval: 30
@@ -643,5 +647,33 @@ exports.deleteDevice = async (req, res) => {
     } catch (error) {
         console.error("DeleteDevice Error:", error);
         res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
+// 10. Check Enrollment Status (Polling for UI to dismiss QR code)
+exports.checkEnrollmentStatus = async (req, res) => {
+    const { id } = req.params;
+    try {
+        const result = await pool.query(
+            "SELECT remaining_enrollments, max_enrollments FROM enrollment_tokens WHERE id = $1", 
+            [id]
+        );
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ success: false, message: "Enrollment token not found" });
+        }
+        
+        const tokenData = result.rows[0];
+        // If remaining is less than max, it means at least one device enrolled
+        const isEnrolled = tokenData.remaining_enrollments < tokenData.max_enrollments;
+        
+        res.json({
+            success: true,
+            enrolled: isEnrolled,
+            remaining_enrollments: tokenData.remaining_enrollments
+        });
+    } catch (error) {
+        console.error("CHECK ENROLLMENT STATUS ERROR:", error);
+        res.status(500).json({ success: false, message: "Server error", detail: error.message });
     }
 };

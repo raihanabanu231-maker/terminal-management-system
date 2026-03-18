@@ -10,7 +10,8 @@ const {
     getDeviceById,
     updateDevice,
     deleteDevice,
-    receiveHeartbeat
+    receiveHeartbeat,
+    checkEnrollmentStatus
 } = require("./device.controller");
 const {
     reportIncident,
@@ -47,6 +48,14 @@ router.post(
     verifyToken,
     authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR"),
     generateEnrollmentToken
+);
+
+// Check Enrollment Status (Polling endpoint)
+router.get(
+    "/enroll-token/:id/status",
+    verifyToken,
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR"),
+    checkEnrollmentStatus
 );
 
 // Enroll Device (Public: Device calls this with Token)
