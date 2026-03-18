@@ -11,7 +11,8 @@ const {
     updateDevice,
     deleteDevice,
     receiveHeartbeat,
-    checkEnrollmentStatus
+    checkEnrollmentStatus,
+    refreshDeviceToken
 } = require("./device.controller");
 const {
     reportIncident,
@@ -62,6 +63,12 @@ router.get(
 router.post(
     "/enroll",
     enrollDevice
+);
+
+// Refresh Token (Public: Device calls this with Refresh Token)
+router.post(
+    "/refresh",
+    refreshDeviceToken
 );
 
 // Device Heartbeat (called by device, max 120/min)

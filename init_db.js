@@ -205,6 +205,7 @@ async function initDB() {
         last_seen TIMESTAMPTZ,
         last_location GEOGRAPHY(POINT, 4326),
         device_token_hash TEXT,
+        device_refresh_token_hash TEXT,
         token_version INTEGER NOT NULL DEFAULT 1,
         enrollment_token_used TEXT,
         token_issued_at TIMESTAMPTZ DEFAULT NOW(),

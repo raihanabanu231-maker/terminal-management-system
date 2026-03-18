@@ -166,16 +166,26 @@ exports.enrollDevice = async (req, res) => {
             return res.status(400).json({ success: false, message: "Could not create device. Serial number required." });
         }
 
-        // Step 2: Generate Device JWT
+        // Step 2: Generate Device Tokens (Access & Refresh)
         const jwt = require("jsonwebtoken");
-        const deviceToken = jwt.sign(
-            { id: device.id, role: "DEVICE", tenant_id: device.tenant_id },
-            process.env.JWT_SECRET
+        
+        // Access Token: Short-lived (1 day) for security
+        const access_token = jwt.sign(
+            { id: device.id, role: "DEVICE", tenant_id: device.tenant_id, type: "access" },
+            process.env.JWT_SECRET,
+            { expiresIn: '1d' }
         );
 
-        const deviceTokenHash = crypto.createHash('sha256').update(deviceToken).digest('hex');
+        // Refresh Token: Long-lived (30 days) to keep device alive
+        const refresh_token = jwt.sign(
+            { id: device.id, role: "DEVICE", tenant_id: device.tenant_id, type: "refresh" },
+            process.env.JWT_SECRET,
+            { expiresIn: '30d' }
+        );
 
-        // Step 3: Update device record
+        const accessTokenHash = crypto.createHash('sha256').update(access_token).digest('hex');
+        const refreshTokenHash = crypto.createHash('sha256').update(refresh_token).digest('hex');
+
         await pool.query(
             `UPDATE devices 
              SET status = 'active', 
@@ -183,34 +193,114 @@ exports.enrollDevice = async (req, res) => {
                  enrollment_token = NULL, 
                  enrollment_token_used = $1, 
                  device_token_hash = $2, 
+                 device_refresh_token_hash = $3,
+                 token_issued_at = NOW(),
+                 token_revoked_at = NULL,
                  last_seen = NOW() 
-             WHERE id = $3`,
-            [tokenHash, deviceTokenHash, device.id]
+             WHERE id = $4`,
+            [tokenHash, accessTokenHash, refreshTokenHash, device.id]
         );
 
-        // Step 4: Store in device_tokens table (Jayakumar Spec)
+        // Step 4: Store in device_tokens table (Audit/History)
         await pool.query(
             `INSERT INTO device_tokens (device_id, token_hash, issued_at)
              VALUES ($1, $2, NOW())`,
-            [device.id, deviceTokenHash]
+            [device.id, accessTokenHash]
         );
 
         // Step 5: Audit logs
         await logAudit(device.tenant_id, null, "DEVICE_ENROLLED", "DEVICE", device.id, { serial: actualSerial });
         await logAudit(device.tenant_id, null, "DEVICE_TOKEN_CREATED", "DEVICE", device.id, { serial: actualSerial });
 
-        // Step 6: Return response (Jayakumar Spec format)
+        // Step 6: Return response (Multi-Token format)
         res.json({
             success: true,
             message: "Device Enrolled Successfully",
             device_id: device.id,
-            device_token: deviceToken,
+            access_token: access_token,
+            refresh_token: refresh_token,
+            expires_in: 86400, // 1 day in seconds
             heartbeat_interval: 30
         });
 
     } catch (error) {
         console.error("ENROLL DEVICE ERROR:", error);
         res.status(500).json({ success: false, message: "Server error", detail: error.message });
+    }
+};
+
+// 2b. Refresh Device Token
+exports.refreshDeviceToken = async (req, res) => {
+    const { refresh_token } = req.body;
+
+    if (!refresh_token) {
+        return res.status(400).json({ success: false, message: "refresh_token is required" });
+    }
+
+    try {
+        const jwt = require("jsonwebtoken");
+        
+        // 1. Verify the refresh token cryptographically
+        let decoded;
+        try {
+            decoded = jwt.verify(refresh_token, process.env.JWT_SECRET);
+        } catch (err) {
+            return res.status(401).json({ success: false, message: "Invalid or expired refresh token" });
+        }
+
+        if (decoded.role !== "DEVICE" || decoded.type !== "refresh") {
+            return res.status(401).json({ success: false, message: "Invalid token type" });
+        }
+
+        // 2. Check the database to see if this refresh token is still valid (not revoked)
+        const refreshTokenHash = crypto.createHash('sha256').update(refresh_token).digest('hex');
+        const deviceRes = await pool.query(
+            "SELECT id, tenant_id FROM devices WHERE id = $1 AND device_refresh_token_hash = $2 AND deleted_at IS NULL AND token_revoked_at IS NULL",
+            [decoded.id, refreshTokenHash]
+        );
+
+        if (deviceRes.rows.length === 0) {
+            return res.status(401).json({ success: false, message: "Refresh token revoked or device unavailable" });
+        }
+
+        const device = deviceRes.rows[0];
+
+        // 3. Generate new token pair
+        const new_access_token = jwt.sign(
+            { id: device.id, role: "DEVICE", tenant_id: device.tenant_id, type: "access" },
+            process.env.JWT_SECRET,
+            { expiresIn: '1d' }
+        );
+
+        const new_refresh_token = jwt.sign(
+            { id: device.id, role: "DEVICE", tenant_id: device.tenant_id, type: "refresh" },
+            process.env.JWT_SECRET,
+            { expiresIn: '30d' }
+        );
+
+        const newAccessTokenHash = crypto.createHash('sha256').update(new_access_token).digest('hex');
+        const newRefreshTokenHash = crypto.createHash('sha256').update(new_refresh_token).digest('hex');
+
+        // 4. Atomic update in Database
+        await pool.query(
+            `UPDATE devices 
+             SET device_token_hash = $1, 
+                 device_refresh_token_hash = $2, 
+                 token_issued_at = NOW() 
+             WHERE id = $3`,
+            [newAccessTokenHash, newRefreshTokenHash, device.id]
+        );
+
+        res.json({
+            success: true,
+            access_token: new_access_token,
+            refresh_token: new_refresh_token,
+            expires_in: 86400 // 1 day in seconds
+        });
+
+    } catch (error) {
+        console.error("REFRESH DEVICE TOKEN ERROR:", error);
+        res.status(500).json({ success: false, message: "Server error" });
     }
 };
 
