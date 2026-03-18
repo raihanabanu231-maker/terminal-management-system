@@ -39,6 +39,7 @@ router.get(
 router.get(
     "/pending",
     verifyToken,
+    authorizeRoles("DEVICE"),
     deviceRateLimit("command_poll", 60),
     getPendingCommands
 );
@@ -72,12 +73,12 @@ router.post(
 );
 
 // Device Heartbeat (called by device, max 120/min)
-router.post("/heartbeat", verifyToken, deviceRateLimit("heartbeat", 120), receiveHeartbeat);
+router.post("/heartbeat", verifyToken, authorizeRoles("DEVICE"), deviceRateLimit("heartbeat", 120), receiveHeartbeat);
 
 // Incidents & Telemetry
-router.post("/incidents", verifyToken, reportIncident);
+router.post("/incidents", verifyToken, authorizeRoles("DEVICE"), reportIncident);
 router.get("/incidents", verifyToken, authorizeRoles("TENANT_ADMIN", "OPERATOR", "VIEWER"), getIncidents);
-router.post("/telemetry", verifyToken, reportTelemetry);
+router.post("/telemetry", verifyToken, authorizeRoles("DEVICE"), reportTelemetry);
 
 // =============================================
 // DYNAMIC PATHS (/:id, /:deviceId, /:commandId)
@@ -103,6 +104,7 @@ router.post(
 router.post(
     "/:commandId/ack",
     verifyToken,
+    authorizeRoles("DEVICE"),
     ackCommand
 );
 
