@@ -5,7 +5,13 @@ const { logAudit } = require("../../utils/audit");
 
 // 1. Generate Enrollment Token (Jayakumar Spec - uses enrollment_tokens table)
 exports.generateEnrollmentToken = async (req, res) => {
-    const { merchant_id, device_profile_id, max_enrollments, expires_in_minutes, serial, model, tenant_id } = req.body;
+    const { device_profile_id, max_enrollments, expires_in_minutes, serial, model, tenant_id } = req.body;
+    let { merchant_id } = req.body;
+
+    // Clean up frontend strings if they select "None" or "Root Tenant" in the dropdown
+    if (merchant_id === "null" || merchant_id === "undefined" || merchant_id === "") {
+        merchant_id = null;
+    }
 
     // Let finalTenantId be re-assignable 
     let finalTenantId = (req.user.role === "SUPER_ADMIN" && tenant_id)
