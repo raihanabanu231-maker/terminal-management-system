@@ -23,7 +23,7 @@ router.get(
 router.post(
     "/upload",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN"),
+    authorizeRoles("TENANT_ADMIN"),
     uploadArtifact
 );
 
@@ -31,7 +31,7 @@ router.post(
 router.post(
     "/",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN"),
+    authorizeRoles("TENANT_ADMIN"),
     createArtifact
 );
 
@@ -39,7 +39,7 @@ router.post(
 router.post(
     "/:id/approve",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN"),
+    authorizeRoles("TENANT_ADMIN"),
     approveArtifact
 );
 
@@ -47,7 +47,7 @@ router.post(
 router.post(
     "/:id/deprecate",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN"),
+    authorizeRoles("TENANT_ADMIN"),
     deprecateArtifact
 );
 

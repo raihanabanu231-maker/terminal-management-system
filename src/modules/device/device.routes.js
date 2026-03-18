@@ -84,11 +84,11 @@ router.get(
     getDeviceById
 );
 
-// Send Remote Command
+// Send Remote Command - Restricted to Tenant-level users
 router.post(
     "/:deviceId/command",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR"),
+    authorizeRoles("TENANT_ADMIN", "OPERATOR"),
     sendDeviceCommand
 );
 

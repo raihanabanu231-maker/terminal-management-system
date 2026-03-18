@@ -21,7 +21,7 @@ router.get(
 router.post(
     "/",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN"),
+    authorizeRoles("TENANT_ADMIN"),
     createDeployment
 );
 
