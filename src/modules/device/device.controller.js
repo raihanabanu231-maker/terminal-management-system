@@ -198,8 +198,20 @@ exports.sendDeviceCommand = async (req, res) => {
     const { deviceId } = req.params;
     const { type, payload } = req.body;
 
-    if (!type) {
-        return res.status(400).json({ success: false, message: "Command 'type' is required (e.g. REBOOT, LOCK, SYNC)" });
+    const ALLOWED_COMMANDS = [
+        "REBOOT", "SHUTDOWN", 
+        "LOCK_DEVICE", "UNLOCK_DEVICE", 
+        "PASSWORD_UPDATE",
+        "TOGGLE_DEVELOPER_OPTIONS", "TOGGLE_DEVICE_LOGS",
+        "TOGGLE_WIFI", "TOGGLE_BLUETOOTH",
+        "SYNC", "WIPE", "INSTALL_ARTIFACT"
+    ];
+
+    if (!type || !ALLOWED_COMMANDS.includes(type)) {
+        return res.status(400).json({ 
+            success: false, 
+            message: `Invalid or missing command type. Allowed types: ${ALLOWED_COMMANDS.join(", ")}` 
+        });
     }
 
     try {
