@@ -7,7 +7,8 @@ const { logAudit } = require("../../utils/audit");
 exports.generateEnrollmentToken = async (req, res) => {
     const { merchant_id, device_profile_id, max_enrollments, expires_in_minutes, serial, model, tenant_id } = req.body;
 
-    const finalTenantId = (req.user.role === "SUPER_ADMIN" && tenant_id)
+    // Let finalTenantId be re-assignable 
+    let finalTenantId = (req.user.role === "SUPER_ADMIN" && tenant_id)
         ? tenant_id
         : req.user.tenant_id;
 
@@ -18,9 +19,21 @@ exports.generateEnrollmentToken = async (req, res) => {
     try {
         // Validate merchant exists if provided
         if (merchant_id) {
-            const merchRes = await pool.query("SELECT id FROM merchants WHERE id = $1 AND tenant_id = $2", [merchant_id, finalTenantId]);
+            const merchRes = await pool.query("SELECT id, tenant_id FROM merchants WHERE id = $1", [merchant_id]);
             if (merchRes.rows.length === 0) {
-                return res.status(404).json({ success: false, message: "Merchant not found or does not belong to this tenant" });
+                return res.status(404).json({ success: false, message: "Invalid Target Store: Merchant not found in Database" });
+            }
+            
+            // If the user isn't a Super Admin, ensure the merchant belongs to their tenant
+            if (req.user.role !== "SUPER_ADMIN" && merchRes.rows[0].tenant_id !== finalTenantId) {
+                return res.status(403).json({ success: false, message: "This merchant belongs to a different tenant than your admin account." });
+            }
+            
+            // Ensure finalTenantId aligns perfectly with the merchant
+            if (req.user.role === "SUPER_ADMIN") {
+                // Auto-correct the tenant ID to match the merchant's true tenant
+                // so the device is attached to the correct tree!
+                finalTenantId = merchRes.rows[0].tenant_id;
             }
         }
 
