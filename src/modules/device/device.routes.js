@@ -42,11 +42,11 @@ router.get(
     getPendingCommands
 );
 
-// Generate Enrollment Token (QR Code)
+// Generate Enrollment Token (QR Code) - Restricted to Tenant-level users
 router.post(
     "/enroll-token",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR"),
+    authorizeRoles("TENANT_ADMIN", "OPERATOR"),
     generateEnrollmentToken
 );
 
