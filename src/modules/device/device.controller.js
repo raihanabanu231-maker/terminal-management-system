@@ -8,15 +8,17 @@ exports.generateEnrollmentToken = async (req, res) => {
     const { device_profile_id, max_enrollments, expires_in_minutes, serial, model, tenant_id } = req.body;
     let { merchant_id } = req.body;
 
-    // Clean up frontend strings if they select "None" or "Root Tenant" in the dropdown
-    if (merchant_id === "null" || merchant_id === "undefined" || merchant_id === "") {
-        merchant_id = null;
-    }
-
     // Let finalTenantId be re-assignable 
     let finalTenantId = (req.user.role === "SUPER_ADMIN" && tenant_id)
         ? tenant_id
         : req.user.tenant_id;
+
+    // Clean up frontend strings if they select "None" or "Root Tenant" in the dropdown.
+    // Extremely Important: If the frontend sends the Tenant ID as the merchant_id (user selected the Root Organization name),
+    // convert it to null so the device is attached directly to the tenant level!
+    if (merchant_id === "null" || merchant_id === "undefined" || merchant_id === "" || merchant_id === finalTenantId) {
+        merchant_id = null;
+    }
 
     if (!finalTenantId) {
         return res.status(400).json({ success: false, message: "tenant_id is required" });
