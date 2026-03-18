@@ -15,7 +15,7 @@ const { authorizeRoles } = require("../../middleware/role.middleware");
 router.get(
     "/",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR", "VIEWER"),
+    authorizeRoles("TENANT_ADMIN", "OPERATOR", "VIEWER"),
     getArtifacts
 );
 
@@ -55,7 +55,7 @@ router.post(
 router.get(
     "/:id",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR", "VIEWER"),
+    authorizeRoles("TENANT_ADMIN", "OPERATOR", "VIEWER"),
     getArtifactById
 );
 

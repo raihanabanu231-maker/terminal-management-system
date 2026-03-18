@@ -30,7 +30,7 @@ const { deviceRateLimit } = require("../../middleware/deviceRateLimit.middleware
 router.get(
     "/",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR", "VIEWER"),
+    authorizeRoles("TENANT_ADMIN", "OPERATOR", "VIEWER"),
     getDevices
 );
 
@@ -54,7 +54,7 @@ router.post(
 router.get(
     "/enroll-token/:id/status",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR"),
+    authorizeRoles("TENANT_ADMIN", "OPERATOR"),
     checkEnrollmentStatus
 );
 
@@ -69,7 +69,7 @@ router.post("/heartbeat", verifyToken, deviceRateLimit("heartbeat", 120), receiv
 
 // Incidents & Telemetry
 router.post("/incidents", verifyToken, reportIncident);
-router.get("/incidents", verifyToken, authorizeRoles("SUPER_ADMIN"), getIncidents);
+router.get("/incidents", verifyToken, authorizeRoles("TENANT_ADMIN", "OPERATOR", "VIEWER"), getIncidents);
 router.post("/telemetry", verifyToken, reportTelemetry);
 
 // =============================================
@@ -80,7 +80,7 @@ router.post("/telemetry", verifyToken, reportTelemetry);
 router.get(
     "/:id",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR", "VIEWER"),
+    authorizeRoles("TENANT_ADMIN", "OPERATOR", "VIEWER"),
     getDeviceById
 );
 
@@ -103,7 +103,7 @@ router.post(
 router.put(
     "/:id",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN"),
+    authorizeRoles("TENANT_ADMIN"),
     updateDevice
 );
 
@@ -111,7 +111,7 @@ router.put(
 router.delete(
     "/:id",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN"),
+    authorizeRoles("TENANT_ADMIN"),
     deleteDevice
 );
 
