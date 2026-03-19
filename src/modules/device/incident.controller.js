@@ -46,13 +46,13 @@ exports.reportIncident = async (req, res) => {
 // 2. Report Telemetry (Vitals)
 exports.reportTelemetry = async (req, res) => {
     const device_id = req.user.id;
-    const { cpu, ram, battery, storage, custom } = req.body;
+    const { reported_at, ...payload } = req.body; // Expecting reported_at and generic vitals
 
     try {
         await pool.query(
-            `INSERT INTO device_telemetry (device_id, cpu_usage, ram_usage, battery_level, storage_usage, custom_data)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [device_id, cpu, ram, battery, storage, custom || {}]
+            `INSERT INTO device_telemetry (device_id, reported_at, payload)
+             VALUES ($1, $2, $3)`,
+            [device_id, reported_at || new Date(), payload || {}]
         );
 
         res.json({ success: true });

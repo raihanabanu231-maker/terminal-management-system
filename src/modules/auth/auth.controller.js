@@ -89,6 +89,9 @@ exports.login = async (req, res) => {
 
     // 5. Generate Dual Tokens (Access + Refresh)
     const jti = crypto.randomBytes(16).toString("hex");
+    const accessTokenExpiry = new Date(Date.now() + 15 * 60 * 1000); // 15m
+    const refreshTokenExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7d
+
     const payload = {
       id: user.id,
       tenant_id: user.tenant_id,
@@ -99,11 +102,14 @@ exports.login = async (req, res) => {
 
     const accessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: ACCESS_TOKEN_EXPIRY });
     const refreshToken = jwt.sign({ id: user.id, jti: jti }, process.env.JWT_SECRET, { expiresIn: REFRESH_TOKEN_EXPIRY });
+    const refreshTokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
 
     // 6. Record Session / Track JTI
     await pool.query(
-      "INSERT INTO user_sessions (user_id, jti, ip_address, user_agent) VALUES ($1, $2, $3, $4)",
-      [user.id, jti, req.ip, req.get('user-agent')]
+      `INSERT INTO user_sessions 
+       (user_id, tenant_id, access_jti, refresh_token_hash, access_expires_at, refresh_expires_at, ip_address, user_agent) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [user.id, user.tenant_id, jti, refreshTokenHash, accessTokenExpiry, refreshTokenExpiry, req.ip, req.get('user-agent')]
     );
 
     // Audit Log Success
@@ -138,10 +144,11 @@ exports.refresh = async (req, res) => {
     // 1. Verify JWT
     const decoded = jwt.verify(refresh_token, process.env.JWT_SECRET);
 
-    // 2. Check DB if session is active and not invalidated
+    // 2. Check DB if session is active and not revoked
+    const refreshTokenHash = crypto.createHash('sha256').update(refresh_token).digest('hex');
     const sessionRes = await pool.query(
-      "SELECT * FROM user_sessions WHERE user_id = $1 AND jti = $2 AND invalidated_at IS NULL",
-      [decoded.id, decoded.jti]
+      "SELECT * FROM user_sessions WHERE user_id = $1 AND access_jti = $2 AND refresh_token_hash = $3 AND revoked_at IS NULL",
+      [decoded.id, decoded.jti, refreshTokenHash]
     );
 
     if (sessionRes.rows.length === 0) {
@@ -195,9 +202,9 @@ exports.logout = async (req, res) => {
 
     const decoded = jwt.verify(refresh_token, process.env.JWT_SECRET);
 
-    // Invalidate session in DB
+    // Revoke session in DB
     await pool.query(
-      "UPDATE user_sessions SET invalidated_at = NOW() WHERE user_id = $1 AND jti = $2",
+      "UPDATE user_sessions SET revoked_at = NOW() WHERE user_id = $1 AND access_jti = $2",
       [decoded.id, decoded.jti]
     );
 

@@ -38,7 +38,7 @@ exports.verifyToken = async (req, res, next) => {
             // TC-LOGOUT-02 — Mandatory Session Validity Check
             // Ensures that if a user logs out, their Access Token is killed immediately.
             const sessionCheck = await pool.query(
-                "SELECT id FROM user_sessions WHERE user_id = $1 AND jti = $2 AND invalidated_at IS NULL",
+                "SELECT id FROM user_sessions WHERE user_id = $1 AND access_jti = $2 AND revoked_at IS NULL",
                 [verified.id, verified.jti]
             );
 

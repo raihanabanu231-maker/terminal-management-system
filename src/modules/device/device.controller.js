@@ -31,12 +31,12 @@ exports.generateEnrollmentToken = async (req, res) => {
             if (merchRes.rows.length === 0) {
                 return res.status(404).json({ success: false, message: "Invalid Target Store: Merchant not found in Database" });
             }
-            
+
             // If the user isn't a Super Admin, ensure the merchant belongs to their tenant
             if (req.user.role !== "SUPER_ADMIN" && merchRes.rows[0].tenant_id !== finalTenantId) {
                 return res.status(403).json({ success: false, message: "This merchant belongs to a different tenant than your admin account." });
             }
-            
+
             // Ensure finalTenantId aligns perfectly with the merchant
             if (req.user.role === "SUPER_ADMIN") {
                 // Auto-correct the tenant ID to match the merchant's true tenant
@@ -77,7 +77,7 @@ exports.generateEnrollmentToken = async (req, res) => {
         // Fetch names for UI feedback
         const tenantRes = await pool.query("SELECT name FROM tenants WHERE id = $1", [finalTenantId]);
         const tenantName = tenantRes.rows[0]?.name || "Unknown";
-        
+
         let merchantName = null;
         if (merchant_id) {
             const merchRes = await pool.query("SELECT name FROM merchants WHERE id = $1", [merchant_id]);
@@ -168,7 +168,7 @@ exports.enrollDevice = async (req, res) => {
 
         // Step 2: Generate Device Tokens (Access & Refresh)
         const jwt = require("jsonwebtoken");
-        
+
         // Access Token: Short-lived (1 day) for security
         const access_token = jwt.sign(
             { id: device.id, role: "DEVICE", tenant_id: device.tenant_id, type: "access" },
@@ -239,7 +239,7 @@ exports.refreshDeviceToken = async (req, res) => {
 
     try {
         const jwt = require("jsonwebtoken");
-        
+
         // 1. Verify the refresh token cryptographically
         let decoded;
         try {
@@ -310,8 +310,8 @@ exports.sendDeviceCommand = async (req, res) => {
     const { type, payload } = req.body;
 
     const ALLOWED_COMMANDS = [
-        "REBOOT", "SHUTDOWN", 
-        "LOCK_DEVICE", "UNLOCK_DEVICE", 
+        "REBOOT", "SHUTDOWN",
+        "LOCK_DEVICE", "UNLOCK_DEVICE",
         "PASSWORD_UPDATE",
         "TOGGLE_DEVELOPER_OPTIONS", "TOGGLE_DEVICE_LOGS",
         "TOGGLE_WIFI", "TOGGLE_BLUETOOTH",
@@ -319,9 +319,9 @@ exports.sendDeviceCommand = async (req, res) => {
     ];
 
     if (!type || !ALLOWED_COMMANDS.includes(type)) {
-        return res.status(400).json({ 
-            success: false, 
-            message: `Invalid or missing command type. Allowed types: ${ALLOWED_COMMANDS.join(", ")}` 
+        return res.status(400).json({
+            success: false,
+            message: `Invalid or missing command type. Allowed types: ${ALLOWED_COMMANDS.join(", ")}`
         });
     }
 
@@ -548,23 +548,25 @@ exports.receiveHeartbeat = async (req, res) => {
     // Note: This endpoint is protected by authorizeRoles("DEVICE"), which means
     // req.user.id is securely populated from the device's JWT token, NOT the request body.
     const deviceId = req.user.id;
-    const { battery_level, app_version, network_type, metadata } = req.body;
+    const { reported_at } = req.body;
 
     try {
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
 
-            // 1. Insert the exact telemetry ping into the audit/heartbeat table
+            // 1. Insert/Update the isolated heartbeat tracker
             await client.query(
-                `INSERT INTO device_heartbeats (device_id, battery_level, app_version, network_type, metadata)
-                 VALUES ($1, $2, $3, $4, $5)`,
-                [deviceId, battery_level || null, app_version || null, network_type || null, metadata || {}]
+                `INSERT INTO device_heartbeats (device_id, last_seen)
+                 VALUES ($1, $2)
+                 ON CONFLICT (device_id) 
+                 DO UPDATE SET last_seen = EXCLUDED.last_seen, updated_at = NOW()`,
+                [deviceId, reported_at || new Date()]
             );
 
             // 2. Update the parent device record to mark it as currently "Online"
             await client.query(
-                `UPDATE devices SET last_seen = NOW() WHERE id = $1`,
+                `UPDATE devices SET last_seen = NOW(), status = 'active' WHERE id = $1`,
                 [deviceId]
             );
 
@@ -680,9 +682,9 @@ exports.startRetryJob = () => {
             if (res.rowCount > 0) {
                 console.log(`🔄 Retried ${res.rowCount} unacknowledged commands.`);
                 for (const row of res.rows) {
-                    await logAudit(null, null, "COMMAND_RETRY", "DEVICE", row.device_id, { 
-                        command_id: row.id, 
-                        attempt: row.retry_count 
+                    await logAudit(null, null, "COMMAND_RETRY", "DEVICE", row.device_id, {
+                        command_id: row.id,
+                        attempt: row.retry_count
                     });
                 }
             }
@@ -699,9 +701,9 @@ exports.startRetryJob = () => {
             if (failedRes.rowCount > 0) {
                 console.log(`❌ Failed ${failedRes.rowCount} commands (max retries exceeded).`);
                 for (const row of failedRes.rows) {
-                    await logAudit(null, null, "COMMAND_FAILED", "DEVICE", row.device_id, { 
-                        command_id: row.id, 
-                        reason: "max_retries_exceeded" 
+                    await logAudit(null, null, "COMMAND_FAILED", "DEVICE", row.device_id, {
+                        command_id: row.id,
+                        reason: "max_retries_exceeded"
                     });
                 }
             }
@@ -763,7 +765,7 @@ exports.deleteDevice = async (req, res) => {
         const result = await pool.query("UPDATE devices SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING *", [id]);
 
         if (result.rows.length === 0) {
-          return res.status(404).json({ success: false, message: "Device not found or already deleted" });
+            return res.status(404).json({ success: false, message: "Device not found or already deleted" });
         }
 
         res.json({ success: true, message: "Device soft-deleted successfully" });
@@ -778,18 +780,18 @@ exports.checkEnrollmentStatus = async (req, res) => {
     const { id } = req.params;
     try {
         const result = await pool.query(
-            "SELECT remaining_enrollments, max_enrollments FROM enrollment_tokens WHERE id = $1", 
+            "SELECT remaining_enrollments, max_enrollments FROM enrollment_tokens WHERE id = $1",
             [id]
         );
-        
+
         if (result.rows.length === 0) {
             return res.status(404).json({ success: false, message: "Enrollment token not found" });
         }
-        
+
         const tokenData = result.rows[0];
         // If remaining is less than max, it means at least one device enrolled
         const isEnrolled = tokenData.remaining_enrollments < tokenData.max_enrollments;
-        
+
         res.json({
             success: true,
             enrolled: isEnrolled,
