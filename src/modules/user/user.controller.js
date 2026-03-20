@@ -126,7 +126,32 @@ exports.getUsers = async (req, res) => {
   }
 };
 
-// 5. Delete User (Soft Delete)
+// 5. Update User Metadata
+exports.updateUser = async (req, res) => {
+  const { id } = req.params;
+  const { first_name, last_name, status } = req.body;
+
+  try {
+    const result = await pool.query(
+      `UPDATE users 
+       SET first_name = COALESCE($1, first_name), 
+           last_name = COALESCE($2, last_name), 
+           status = COALESCE($3, status),
+           updated_at = NOW()
+       WHERE id = $4 AND deleted_at IS NULL RETURNING *`,
+      [first_name, last_name, status, id]
+    );
+
+    if (result.rows.length === 0) return res.status(404).json({ success: false, message: "User not found" });
+
+    await logAudit(result.rows[0].tenant_id, req.user.id, "user.update", "USER", id, { fields: Object.keys(req.body) });
+    res.json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+// 6. Delete User (Soft Delete)
 exports.deleteUser = async (req, res) => {
   const { id } = req.params;
   if (id === req.user.id) return res.status(400).json({ message: "You cannot delete your own account" });
@@ -140,4 +165,39 @@ exports.deleteUser = async (req, res) => {
   } catch (error) {
     res.status(500).json({ success: false, message: "Server error" });
   }
+};
+
+// --- INVITATION TRACKING ---
+
+// 7. Get All Pending Invites
+exports.getInvitations = async (req, res) => {
+    try {
+        let query = "SELECT i.*, r.name as role_name FROM user_invitations i JOIN roles r ON i.role_id = r.id WHERE i.deleted_at IS NULL";
+        const params = [];
+
+        if (req.user.role !== "SUPER_ADMIN") {
+            params.push(req.user.tenant_id);
+            query += " AND i.tenant_id = $1";
+        }
+        query += " ORDER BY i.created_at DESC";
+
+        const result = await pool.query(query, params);
+        res.json({ success: true, data: result.rows });
+    } catch (error) {
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
+// 8. Revoke Invitation
+exports.deleteInvitation = async (req, res) => {
+    const { id } = req.params;
+    try {
+        const result = await pool.query("UPDATE user_invitations SET deleted_at = NOW() WHERE id = $1 RETURNING *", [id]);
+        if (result.rowCount === 0) return res.status(404).json({ message: "Invitation not found" });
+
+        await logAudit(result.rows[0].tenant_id, req.user.id, "user.invite_revoked", "USER_INVITATION", id);
+        res.json({ success: true, message: "Invitation revoked successfully" });
+    } catch (error) {
+        res.status(500).json({ success: false, message: "Server error" });
+    }
 };
