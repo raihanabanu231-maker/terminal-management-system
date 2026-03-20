@@ -131,13 +131,15 @@ exports.enrollDevice = async (req, res) => {
             // New flow: enrollment_tokens table
             enrollmentRecord = enrollTokenRes.rows[0];
 
-            // 🛡️ SECURITY CHECK: Serial lock enforcement
-            // If the token was generated for a specific serial, only that serial can scan it.
-            if (enrollmentRecord.serial && String(enrollmentRecord.serial).trim() !== String(actualSerial || "").trim()) {
+            // 🛡️ SECURITY CHECK: Serial lock enforcement (Case-Insensitive & Trimmed)
+            const storedSerial = String(enrollmentRecord.serial || "").trim().toLowerCase();
+            const incomingSerial = String(actualSerial || "").trim().toLowerCase();
+
+            if (enrollmentRecord.serial && storedSerial !== incomingSerial) {
                 console.error(`🚨 ENROLL_REJECTED: Serial Mismatch. Expected: [${enrollmentRecord.serial}], Got: [${actualSerial}]`);
                 return res.status(403).json({ 
                     success: false, 
-                    message: `Security Violation: This QR code is locked to serial [${enrollmentRecord.serial}], but you sent [${actualSerial}].` 
+                    message: `Security Violation: This QR code is locked to serial [${enrollmentRecord.serial}], but your device reported [${actualSerial}]. Case and spaces matter!` 
                 });
             }
 
