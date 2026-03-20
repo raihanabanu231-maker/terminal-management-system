@@ -88,7 +88,7 @@ router.post("/telemetry", verifyToken, authorizeRoles("DEVICE"), reportTelemetry
 router.get(
     "/:id",
     verifyToken,
-    authorizeRoles("TENANT_ADMIN", "OPERATOR", "VIEWER"),
+    authorizeRoles("TENANT_ADMIN", "OPERATOR", "VIEWER", "DEVICE"),
     getDeviceById
 );
 
@@ -112,7 +112,7 @@ router.post(
 router.put(
     "/:id",
     verifyToken,
-    authorizeRoles("TENANT_ADMIN"),
+    authorizeRoles("TENANT_ADMIN", "OPERATOR", "SUPER_ADMIN"),
     updateDevice
 );
 
@@ -120,7 +120,7 @@ router.put(
 router.delete(
     "/:id",
     verifyToken,
-    authorizeRoles("TENANT_ADMIN"),
+    authorizeRoles("TENANT_ADMIN", "OPERATOR", "SUPER_ADMIN"),
     deleteDevice
 );
 

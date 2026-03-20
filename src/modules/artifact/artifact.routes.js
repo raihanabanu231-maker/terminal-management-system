@@ -1,62 +1,72 @@
 const express = require("express");
 const router = express.Router();
+const multer = require("multer");
+const path = require("path");
 const {
-    createArtifact,
     uploadArtifact,
     approveArtifact,
     getArtifacts,
-    getArtifactById,
-    deprecateArtifact
+    deleteArtifact
 } = require("./artifact.controller");
 const { verifyToken } = require("../../middleware/auth.middleware");
 const { authorizeRoles } = require("../../middleware/role.middleware");
+
+// --- MULTER STORAGE CONFIG ---
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, "uploads/artifacts/");
+    },
+    filename: (req, file, cb) => {
+        // Create a unique name: timestamp-originalName
+        const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1E9);
+        cb(null, uniqueSuffix + path.extname(file.originalname));
+    }
+});
+
+const upload = multer({ 
+    storage: storage,
+    limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit (Adjust for big firmware)
+});
 
 // List Artifacts
 router.get(
     "/",
     verifyToken,
-    authorizeRoles("TENANT_ADMIN", "OPERATOR", "VIEWER"),
+    authorizeRoles("TENANT_ADMIN", "OPERATOR", "VIEWER", "SUPER_ADMIN"),
     getArtifacts
 );
 
-// Upload Artifact File (Step 1)
+/**
+ * 🚀 ARTIFACT FLOW - STEP 1 & 2: UPLOAD & REGISTER
+ * POST /v1/artifacts/upload
+ * Multi-part/form-data:
+ *   - file: (The binary artifact)
+ *   - name: "My App"
+ *   - version: "1.0.1"
+ *   - type: "app" or "firmware"
+ */
 router.post(
     "/upload",
     verifyToken,
-    authorizeRoles("TENANT_ADMIN"),
+    authorizeRoles("TENANT_ADMIN", "SUPER_ADMIN"),
+    upload.single("file"),
     uploadArtifact
 );
 
-// Create Artifact Metadata (Step 2)
-router.post(
-    "/",
-    verifyToken,
-    authorizeRoles("TENANT_ADMIN"),
-    createArtifact
-);
-
-// Approve Artifact (Step 3) — must come before /:id
+// 🚀 ARTIFACT FLOW - STEP 3: APPROVE
 router.post(
     "/:id/approve",
     verifyToken,
-    authorizeRoles("TENANT_ADMIN"),
+    authorizeRoles("TENANT_ADMIN", "OPERATOR"),
     approveArtifact
 );
 
-// Deprecate Artifact
-router.post(
-    "/:id/deprecate",
-    verifyToken,
-    authorizeRoles("TENANT_ADMIN"),
-    deprecateArtifact
-);
-
-// Get Single Artifact (must be last dynamic route)
-router.get(
+// Delete Artifact
+router.delete(
     "/:id",
     verifyToken,
-    authorizeRoles("TENANT_ADMIN", "OPERATOR", "VIEWER"),
-    getArtifactById
+    authorizeRoles("TENANT_ADMIN", "SUPER_ADMIN"),
+    deleteArtifact
 );
 
 module.exports = router;

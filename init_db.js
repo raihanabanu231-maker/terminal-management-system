@@ -263,20 +263,41 @@ async function initDB() {
       );
     `);
 
-    // 16. Artifact Deployments
+    // 16. Deployments (Strategy)
     await client.query(`
-      CREATE TABLE IF NOT EXISTS artifact_deployments (
+      CREATE TABLE IF NOT EXISTS deployments (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
         artifact_id UUID NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
         target_type TEXT NOT NULL CHECK (target_type IN ('device','group','merchant','tenant')),
         target_id UUID NOT NULL,
         rollout_percentage INTEGER NOT NULL DEFAULT 100,
-        failure_threshold_percent INTEGER DEFAULT 10,
         status TEXT NOT NULL DEFAULT 'pending',
-        started_at TIMESTAMPTZ,
-        completed_at TIMESTAMPTZ,
         created_by UUID REFERENCES users(id),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    // 16b. Deployment Targets (Per-device tracking)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS deployment_targets (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        deployment_id UUID NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+        device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed', 'failed')),
+        last_error TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    // 16c. Deployment Events (Audit log for progress)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS deployment_events (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        deployment_id UUID NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+        device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        event_type TEXT NOT NULL,
+        event_payload JSONB DEFAULT '{}',
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);

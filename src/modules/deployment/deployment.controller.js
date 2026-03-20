@@ -1,298 +1,156 @@
 const pool = require("../../config/db");
 const { logAudit } = require("../../utils/audit");
 
-// 1. Create Deployment (Step 1 in Sir's spec)
+/**
+ * DEPLOYMENT ENGINE - STAGE 2 & 3: STRATEGY & EXECUTION (SIR SPEC)
+ * 1. Admin creates a Campaign (Deployment Strategy).
+ * 2. Background Resolver expands merchant/tenant targets to single devices.
+ * 3. Background Executor marks devices for INSTALL_ARTIFACT commands.
+ */
+
+// 1. Create Deployment (Step 1)
 exports.createDeployment = async (req, res) => {
-    const { artifact_id, target_type, target_id, rollout_percentage, deployment_strategy } = req.body;
+    const { artifact_id, target_type, target_id, rollout_percentage } = req.body;
 
     if (!artifact_id || !target_type || !target_id) {
-        return res.status(400).json({ success: false, message: "artifact_id, target_type, and target_id are required" });
+        return res.status(400).json({ success: false, message: "artifact_id, target_type, and target_id are required." });
     }
 
     const tenantId = req.user.role === "SUPER_ADMIN" ? (req.body.tenant_id || req.user.tenant_id) : req.user.tenant_id;
 
     try {
-        // Verify artifact exists and is approved
+        // 1. Verify Artifact is Approved
         const artifactRes = await pool.query(
             "SELECT * FROM artifacts WHERE id = $1 AND status = 'approved' AND deleted_at IS NULL",
             [artifact_id]
         );
 
         if (artifactRes.rows.length === 0) {
-            return res.status(400).json({ success: false, message: "Artifact not found or not approved. Only approved artifacts can be deployed." });
+            return res.status(400).json({ success: false, message: "Only APPROVED artifacts can be deployed to devices." });
         }
 
         const artifact = artifactRes.rows[0];
 
-        // Create deployment
+        // 2. Create the Deployment Campaign record
         const result = await pool.query(
-            `INSERT INTO deployments (tenant_id, artifact_id, deployment_strategy, target_type, target_id, rollout_percentage, status, created_by)
-             VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7)
-             RETURNING *`,
-            [tenantId, artifact_id, deployment_strategy || 'immediate', target_type, target_id, rollout_percentage || 100, req.user.id]
+            `INSERT INTO deployments (tenant_id, artifact_id, target_type, target_id, rollout_percentage, status, created_by)
+             VALUES ($1, $2, $3, $4, $5, 'pending', $6)
+             RETURNING id`,
+            [tenantId, artifact_id, target_type, target_id, rollout_percentage || 100, req.user.id]
         );
 
-        const deployment = result.rows[0];
+        const deploymentId = result.rows[0].id;
 
-        // Step 2: Resolve Targets (Expand targets to deployment_targets table)
-        await resolveDeploymentTargets(deployment);
+        // 3. Resolve Targets (Find all devices belonging to this target)
+        await resolveDeploymentTargets(deploymentId, target_type, target_id, tenantId, rollout_percentage || 100);
 
-        await logAudit(tenantId, req.user.id, "DEPLOYMENT_CREATED", "DEPLOYMENT", deployment.id, {
+        await logAudit(tenantId, req.user.id, "DEPLOYMENT_STARTED", "DEPLOYMENT", deploymentId, {
             artifact: artifact.name,
             version: artifact.version,
-            target_type,
-            target_id
+            target: target_type
         });
-
-        const targetCount = await pool.query(
-            "SELECT COUNT(*) FROM deployment_targets WHERE deployment_id = $1",
-            [deployment.id]
-        );
 
         res.status(201).json({
             success: true,
-            message: "Deployment created and targets resolved",
-            deployment: {
-                ...deployment,
-                target_count: parseInt(targetCount.rows[0].count)
-            }
+            message: "Deployment strategy created. Background resolution is complete.",
+            deployment_id: deploymentId
         });
+
     } catch (error) {
         console.error("CREATE_DEPLOYMENT_ERROR:", error);
         res.status(500).json({ success: false, message: "Server error", detail: error.message });
     }
 };
 
-// Target Resolver (Step 2 logic)
-async function resolveDeploymentTargets(deployment) {
-    const { id: deploymentId, target_type, target_id, rollout_percentage, tenant_id } = deployment;
-
+// Internal Helper: Target Resolver (Step 2)
+async function resolveDeploymentTargets(deploymentId, target_type, target_id, tenant_id, rollout) {
     let devices = [];
 
     if (target_type === 'device') {
-        const res = await pool.query(
-            "SELECT id FROM devices WHERE id = $1 AND status = 'active' AND deleted_at IS NULL",
-            [target_id]
-        );
+        const res = await pool.query("SELECT id FROM devices WHERE id = $1 AND status = 'active'", [target_id]);
         devices = res.rows;
     } else if (target_type === 'merchant') {
+        // Find devices in this merchant OR any child merchant (if hierarchy exists)
         const res = await pool.query(
             `SELECT d.id FROM devices d
              JOIN merchants m ON d.merchant_id = m.id
              WHERE (m.id = $1 OR m.path LIKE '%' || $1::text || '%')
-             AND d.status = 'active' AND d.deleted_at IS NULL`,
+             AND d.status = 'active'`,
             [target_id]
         );
         devices = res.rows;
     } else if (target_type === 'tenant') {
-        const res = await pool.query(
-            "SELECT id FROM devices WHERE tenant_id = $1 AND status = 'active' AND deleted_at IS NULL",
-            [target_id]
-        );
+        const res = await pool.query("SELECT id FROM devices WHERE tenant_id = $1 AND status = 'active'", [target_id]);
         devices = res.rows;
-    } else if (target_type === 'device_group' || target_type === 'group') {
-        const res = await pool.query(
-            "SELECT id FROM devices WHERE tenant_id = $1 AND status = 'active' AND deleted_at IS NULL",
-            [tenant_id]
-        );
+    } else {
+        // Default to all active devices in tenant
+        const res = await pool.query("SELECT id FROM devices WHERE tenant_id = $1 AND status = 'active'", [tenant_id]);
         devices = res.rows;
     }
 
-    if (rollout_percentage < 100 && devices.length > 0) {
-        const targetCount = Math.ceil(devices.length * (rollout_percentage / 100));
+    // Apply Rollout Percentage
+    if (rollout < 100 && devices.length > 0) {
+        const targetCount = Math.ceil(devices.length * (rollout / 100));
         devices = devices.sort(() => Math.random() - 0.5).slice(0, targetCount);
     }
 
-    for (const device of devices) {
+    // Insert 1 row per device into deployment_targets (The per-device progress bar)
+    for (const dev of devices) {
         await pool.query(
-            `INSERT INTO deployment_targets (deployment_id, device_id, status)
-             VALUES ($1, $2, 'pending')
-             ON CONFLICT DO NOTHING`,
-            [deploymentId, device.id]
+            "INSERT INTO deployment_targets (deployment_id, device_id, status) VALUES ($1, $2, 'pending') ON CONFLICT DO NOTHING",
+            [deploymentId, dev.id]
         );
     }
 
-    await pool.query(
-        "UPDATE deployments SET status = 'in_progress' WHERE id = $1",
-        [deploymentId]
-    );
+    // Mark deployment as In Progress once targets are resolved
+    await pool.query("UPDATE deployments SET status = 'in_progress' WHERE id = $1", [deploymentId]);
 }
 
-// 2. List Deployments
-exports.getDeployments = async (req, res) => {
-    const { status } = req.query;
-
-    try {
-        let query = `SELECT d.*, a.name as artifact_name, a.version as artifact_version, a.artifact_type,
-                      u.email as created_by_email, t.name as tenant_name,
-                      CASE 
-                        WHEN d.target_type = 'merchant' THEN (SELECT name FROM merchants WHERE id = d.target_id)
-                        WHEN d.target_type = 'device' THEN (SELECT serial FROM devices WHERE id = d.target_id)
-                        WHEN d.target_type = 'tenant' THEN (SELECT name FROM tenants WHERE id = d.target_id)
-                        WHEN d.target_type IN ('group', 'device_group') THEN 'Device Group'
-                        ELSE 'Unknown'
-                      END as target_name,
-                      (SELECT COUNT(*) FROM deployment_targets dt WHERE dt.deployment_id = d.id) as total_targets,
-                      (SELECT COUNT(*) FROM deployment_targets dt WHERE dt.deployment_id = d.id AND dt.status = 'completed') as completed_targets,
-                      (SELECT COUNT(*) FROM deployment_targets dt WHERE dt.deployment_id = d.id AND dt.status = 'failed') as failed_targets
-                     FROM deployments d
-                     JOIN artifacts a ON d.artifact_id = a.id
-                     JOIN tenants t ON d.tenant_id = t.id
-                     LEFT JOIN users u ON d.created_by = u.id
-                     WHERE 1=1`;
-        const params = [];
-
-        if (req.user.role !== "SUPER_ADMIN") {
-            params.push(req.user.tenant_id);
-            query += ` AND d.tenant_id = $${params.length}`;
-        }
-
-        if (status) {
-            params.push(status);
-            query += ` AND d.status = $${params.length}`;
-        }
-
-        query += " ORDER BY d.created_at DESC";
-
-        const result = await pool.query(query, params);
-
-        res.json({
-            success: true,
-            total: result.rowCount,
-            data: result.rows
-        });
-    } catch (error) {
-        res.status(500).json({ success: false, message: "Server error", detail: error.message });
-    }
-};
-
-// 3. Get Deployment Details
-exports.getDeploymentById = async (req, res) => {
+// 2. Get Deployment Status (Summary for UI Progress Bar)
+exports.getDeploymentStatus = async (req, res) => {
     const { id } = req.params;
 
     try {
-        const deployRes = await pool.query(
-            `SELECT d.*, a.name as artifact_name, a.version as artifact_version, a.artifact_type, a.file_url, a.file_hash, t.name as tenant_name,
-                    CASE 
-                        WHEN d.target_type = 'merchant' THEN (SELECT name FROM merchants WHERE id = d.target_id)
-                        WHEN d.target_type = 'device' THEN (SELECT serial FROM devices WHERE id = d.target_id)
-                        WHEN d.target_type = 'tenant' THEN (SELECT name FROM tenants WHERE id = d.target_id)
-                        WHEN d.target_type IN ('group', 'device_group') THEN 'Device Group'
-                        ELSE 'Unknown'
-                    END as target_name
-             FROM deployments d
-             JOIN artifacts a ON d.artifact_id = a.id
-             JOIN tenants t ON d.tenant_id = t.id
+        const stats = await pool.query(
+            `SELECT 
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE status = 'completed') as completed,
+                COUNT(*) FILTER (WHERE status = 'failed') as failed,
+                COUNT(*) FILTER (WHERE status = 'in_progress') as in_progress,
+                COUNT(*) FILTER (WHERE status = 'pending') as pending
+             FROM deployment_targets WHERE deployment_id = $1`,
+            [id]
+        );
+
+        const deployDetails = await pool.query(
+            `SELECT d.*, a.name as artifact_name, a.version as artifact_version 
+             FROM deployments d 
+             JOIN artifacts a ON d.artifact_id = a.id 
              WHERE d.id = $1`,
             [id]
         );
 
-        if (deployRes.rows.length === 0) {
-            return res.status(404).json({ success: false, message: "Deployment not found" });
-        }
-
-        const targetsRes = await pool.query(
-            `SELECT dt.*, dev.serial, dev.model, dev.status as device_status
-             FROM deployment_targets dt
-             JOIN devices dev ON dt.device_id = dev.id
-             WHERE dt.deployment_id = $1
-             ORDER BY dt.created_at`,
-            [id]
-        );
-
-        const eventsRes = await pool.query(
-            `SELECT de.*, dev.serial
-             FROM deployment_events de
-             JOIN devices dev ON de.device_id = dev.id
-             WHERE de.deployment_id = $1
-             ORDER BY de.created_at DESC LIMIT 50`,
-            [id]
-        );
-
-        const summary = {
-            total: targetsRes.rowCount,
-            pending: targetsRes.rows.filter(t => t.status === 'pending').length,
-            in_progress: targetsRes.rows.filter(t => t.status === 'in_progress').length,
-            completed: targetsRes.rows.filter(t => t.status === 'completed').length,
-            failed: targetsRes.rows.filter(t => t.status === 'failed').length
-        };
+        if (deployDetails.rows.length === 0) return res.status(404).json({ message: "Deployment not found" });
 
         res.json({
             success: true,
-            data: {
-                ...deployRes.rows[0],
-                summary,
-                targets: targetsRes.rows,
-                events: eventsRes.rows
-            }
+            deployment: deployDetails.rows[0],
+            stats: stats.rows[0],
+            progress_percent: stats.rows[0].total > 0 ? (stats.rows[0].completed / stats.rows[0].total) * 100 : 0
         });
     } catch (error) {
-        res.status(500).json({ success: false, message: "Server error", detail: error.message });
+        res.status(500).json({ success: false, message: "Server error" });
     }
 };
 
-// 4. Device Reports Deployment Event (Step 3 callback)
-exports.reportDeploymentEvent = async (req, res) => {
-    const { deployment_id, event_type, event_payload } = req.body;
-    const deviceId = req.user.id;
-
-    if (!deployment_id || !event_type) {
-        return res.status(400).json({ success: false, message: "deployment_id and event_type are required" });
-    }
-
-    try {
-        await pool.query(
-            `INSERT INTO deployment_events (deployment_id, device_id, event_type, event_payload)
-             VALUES ($1, $2, $3, $4)`,
-            [deployment_id, deviceId, event_type, event_payload || {}]
-        );
-
-        let newStatus = null;
-        switch (event_type) {
-            case 'download_started':
-            case 'install_started':
-                newStatus = 'in_progress';
-                break;
-            case 'install_completed':
-                newStatus = 'completed';
-                break;
-            case 'install_failed':
-                newStatus = 'failed';
-                break;
-        }
-
-        if (newStatus) {
-            await pool.query(
-                "UPDATE deployment_targets SET status = $1 WHERE deployment_id = $2 AND device_id = $3",
-                [newStatus, deployment_id, deviceId]
-            );
-        }
-
-        const pendingCount = await pool.query(
-            "SELECT COUNT(*) FROM deployment_targets WHERE deployment_id = $1 AND status IN ('pending', 'in_progress')",
-            [deployment_id]
-        );
-
-        if (parseInt(pendingCount.rows[0].count) === 0) {
-            await pool.query(
-                "UPDATE deployments SET status = 'completed' WHERE id = $1",
-                [deployment_id]
-            );
-        }
-
-        res.json({ success: true, message: "Deployment event recorded" });
-    } catch (error) {
-        res.status(500).json({ success: false, message: "Server error", detail: error.message });
-    }
-};
-
-// 5. Deployment Executor Job (Step 3 logic - 10s interval)
+// 3. Deployment Executor Job (Wakes up every 10s per Sir Spec)
 exports.startDeploymentExecutorJob = () => {
     setInterval(async () => {
         try {
+            // Find 10 pending targets and the actual artifact bits
             const targets = await pool.query(
                 `SELECT dt.id as target_id, dt.deployment_id, dt.device_id, 
-                        a.file_url, a.file_hash, a.version, a.name as artifact_name
+                        a.binary_path, a.version, a.name as artifact_name
                  FROM deployment_targets dt
                  JOIN deployments d ON dt.deployment_id = d.id
                  JOIN artifacts a ON d.artifact_id = a.id
@@ -302,25 +160,57 @@ exports.startDeploymentExecutorJob = () => {
             );
 
             for (const target of targets.rows) {
+                // 1. Create a physical command in the database
+                // Device will retrieve this via Polling every 10 seconds.
                 await pool.query(
-                    `INSERT INTO commands (device_id, type, payload, status, created_by, expires_at)
-                     VALUES ($1, 'INSTALL_ARTIFACT', $2, 'queued', NULL, NOW() + INTERVAL '24 hours')`,
+                    `INSERT INTO commands (device_id, type, payload, status, expires_at)
+                     VALUES ($1, 'INSTALL_ARTIFACT', $2, 'queued', NOW() + INTERVAL '24 hours')`,
                     [target.device_id, JSON.stringify({
-                        artifact_url: target.file_url,
-                        artifact_hash: target.file_hash,
+                        binary_path: target.binary_path,
                         version: target.version,
                         artifact_name: target.artifact_name
                     })]
                 );
 
+                // 2. Mark the target as 'sent' (in_progress in this spec)
                 await pool.query(
                     "UPDATE deployment_targets SET status = 'in_progress' WHERE id = $1",
                     [target.target_id]
                 );
             }
-            if (targets.rowCount > 0) console.log(`📦 Deployment Executor: Generated ${targets.rowCount} commands.`);
         } catch (error) {
-            console.error("Deployment Executor Error:", error);
+            console.error("DEPLOYMENT EXECUTOR ERROR:", error);
         }
     }, 10000);
+};
+
+// 4. Report Deployment Event (Device Callback)
+exports.reportDeploymentEvent = async (req, res) => {
+    const { deployment_id, event_type, event_payload } = req.body;
+    const deviceId = req.user.id;
+
+    try {
+        // Log the exact history event
+        await pool.query(
+            `INSERT INTO deployment_events (deployment_id, device_id, event_type, event_payload)
+             VALUES ($1, $2, $3, $4)`,
+            [deployment_id, deviceId, event_type, event_payload || {}]
+        );
+
+        // Map event to internal status
+        let newStatus = null;
+        if (event_type === 'install_completed') newStatus = 'completed';
+        if (event_type === 'install_failed') newStatus = 'failed';
+
+        if (newStatus) {
+            await pool.query(
+                "UPDATE deployment_targets SET status = $1 WHERE deployment_id = $2 AND device_id = $3",
+                [newStatus, deployment_id, deviceId]
+            );
+        }
+
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ success: false, message: "Server error" });
+    }
 };
