@@ -84,11 +84,9 @@ router.post("/telemetry", verifyToken, authorizeRoles("DEVICE"), reportTelemetry
 // DYNAMIC PATHS (/:id, /:deviceId, /:commandId)
 // =============================================
 
-// Get Single Device (Detail Page)
+// Get Single Device (Detail Page) - Public for hardware identification
 router.get(
     "/:id",
-    verifyToken,
-    authorizeRoles("TENANT_ADMIN", "OPERATOR", "VIEWER", "DEVICE"),
     getDeviceById
 );
 
