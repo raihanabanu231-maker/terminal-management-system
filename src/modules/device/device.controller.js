@@ -105,11 +105,11 @@ exports.generateEnrollmentToken = async (req, res) => {
 
 // 2. Enroll Device (Jayakumar Spec - uses enrollment_tokens + device_tokens tables)
 exports.enrollDevice = async (req, res) => {
-    const { token, serial, enrollment_token, serial_number, device_model, os_version, agent_version, fingerprint } = req.body;
+    const { token, serial, android_id, enrollment_token, serial_number, device_model, os_version, agent_version, fingerprint } = req.body;
 
-    // Support both old field names and Sir's spec field names
+    // Support both Legacy Serial and Modern Android ID
     const actualToken = token || enrollment_token;
-    const actualSerial = serial || serial_number;
+    const actualSerial = serial || serial_number || android_id;
 
     if (!actualToken) {
         return res.status(400).json({ success: false, message: "enrollment_token is required" });
