@@ -11,8 +11,13 @@ exports.verifyToken = async (req, res, next) => {
     }
 
     try {
-        // Remove "Bearer " prefix if present
-        const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : authHeader;
+        // Robust Token Extraction (Handles multiple spaces or different case)
+        let token = authHeader;
+        if (authHeader.toLowerCase().startsWith("bearer ")) {
+            token = authHeader.substring(7).trim();
+        } else {
+            token = authHeader.trim();
+        }
 
         const verified = jwt.verify(token, process.env.JWT_SECRET);
 
