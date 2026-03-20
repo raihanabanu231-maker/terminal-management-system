@@ -269,6 +269,7 @@ async function initDB() {
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
         artifact_id UUID NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+        deployment_strategy TEXT DEFAULT 'immediate',
         target_type TEXT NOT NULL CHECK (target_type IN ('device','group','merchant','tenant')),
         target_id UUID NOT NULL,
         rollout_percentage INTEGER NOT NULL DEFAULT 100,
