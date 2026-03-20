@@ -5,8 +5,11 @@ const { logAudit } = require("../../utils/audit");
 
 // 1. Generate Enrollment Token (Jayakumar Spec - uses enrollment_tokens table)
 exports.generateEnrollmentToken = async (req, res) => {
-    const { device_profile_id, max_enrollments, expires_in_minutes, serial, model, tenant_id } = req.body;
+    const { device_profile_id, max_enrollments, expires_in_minutes, serial, android_id, model, tenant_id } = req.body;
     let { merchant_id } = req.body;
+
+    // Use either legacy serial or modern android_id as the lock identity
+    const identityToLock = serial || android_id;
 
     // Let finalTenantId be re-assignable 
     let finalTenantId = (req.user.role === "SUPER_ADMIN" && tenant_id)
@@ -56,7 +59,7 @@ exports.generateEnrollmentToken = async (req, res) => {
             `INSERT INTO enrollment_tokens (tenant_id, merchant_id, device_profile_id, token_hash, serial, max_enrollments, remaining_enrollments, expires_at, created_by)
              VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $8)
              RETURNING id`,
-            [finalTenantId, merchant_id || null, device_profile_id || null, tokenHash, serial || null, maxEnroll, expiresAt, req.user.id]
+            [finalTenantId, merchant_id || null, device_profile_id || null, tokenHash, identityToLock || null, maxEnroll, expiresAt, req.user.id]
         );
         const tokenId = tokenRes.rows[0].id;
 
@@ -137,9 +140,9 @@ exports.enrollDevice = async (req, res) => {
 
             if (enrollmentRecord.serial && storedSerial !== incomingSerial) {
                 console.error(`🚨 ENROLL_REJECTED: Serial Mismatch. Expected: [${enrollmentRecord.serial}], Got: [${actualSerial}]`);
-                return res.status(403).json({ 
-                    success: false, 
-                    message: `Security Violation: This QR code is locked to serial [${enrollmentRecord.serial}], but your device reported [${actualSerial}]. Case and spaces matter!` 
+                return res.status(403).json({
+                    success: false,
+                    message: `Security Violation: This QR code is locked to serial [${enrollmentRecord.serial}], but your device reported [${actualSerial}]. Case and spaces matter!`
                 });
             }
 
