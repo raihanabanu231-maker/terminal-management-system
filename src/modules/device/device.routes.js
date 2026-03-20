@@ -84,10 +84,11 @@ router.post("/telemetry", verifyToken, authorizeRoles("DEVICE", "TENANT_ADMIN", 
 // DYNAMIC PATHS (/:id, /:deviceId, /:commandId)
 // =============================================
 
-// Get Single Device (Detail Page) - Dynamic Auth: Locked for Guest Browse, but Private for hardware
+// Get Single Device (Detail Page) - Locked down to Token Access only
 router.get(
     "/:id",
     verifyToken,
+    authorizeRoles("DEVICE", "TENANT_ADMIN", "OPERATOR", "VIEWER"),
     getDeviceById
 );
 
