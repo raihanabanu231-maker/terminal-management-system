@@ -531,9 +531,14 @@ exports.getDeviceById = async (req, res) => {
 
         const device = result.rows[0];
 
-        // Authorization Scoping
-        if (role !== "SUPER_ADMIN" && device.tenant_id !== tenant_id) {
-            return res.status(403).json({ success: false, message: "Unauthorized access to device in different tenant" });
+        // Authorization Scoping: ONLY enforce if user is logged in (Browser)
+        // If req.user is null (Android client), we allow it to fetch its own info 
+        // because it already knows its own UUID.
+        if (req.user) {
+            const { tenant_id: userTenantId, role: userRole } = req.user;
+            if (userRole !== "SUPER_ADMIN" && device.tenant_id !== userTenantId) {
+                return res.status(403).json({ success: false, message: "Unauthorized access to device in different company" });
+            }
         }
 
         res.json({ success: true, data: device });

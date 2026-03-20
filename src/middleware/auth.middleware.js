@@ -4,10 +4,10 @@ exports.verifyToken = async (req, res, next) => {
     const authHeader = req.header("Authorization");
 
     if (!authHeader) {
-        return res.status(401).json({
-            success: false,
-            message: "Access Denied: No token provided",
-        });
+        // If no token is provided, we set req.user to null and let the route decide if it's okay
+        // (Great for "Plug-and-Play" hardware that doesn't have a login)
+        req.user = null;
+        return next();
     }
 
     try {
