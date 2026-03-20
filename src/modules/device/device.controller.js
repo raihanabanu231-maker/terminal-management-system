@@ -53,10 +53,10 @@ exports.generateEnrollmentToken = async (req, res) => {
 
         // Store in enrollment_tokens table (Jayakumar Spec)
         const tokenRes = await pool.query(
-            `INSERT INTO enrollment_tokens (tenant_id, merchant_id, device_profile_id, token_hash, max_enrollments, remaining_enrollments, expires_at, created_by)
-             VALUES ($1, $2, $3, $4, $5, $5, $6, $7)
+            `INSERT INTO enrollment_tokens (tenant_id, merchant_id, device_profile_id, token_hash, serial, max_enrollments, remaining_enrollments, expires_at, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $8)
              RETURNING id`,
-            [finalTenantId, merchant_id || null, device_profile_id || null, tokenHash, maxEnroll, expiresAt, req.user.id]
+            [finalTenantId, merchant_id || null, device_profile_id || null, tokenHash, serial || null, maxEnroll, expiresAt, req.user.id]
         );
         const tokenId = tokenRes.rows[0].id;
 
@@ -130,6 +130,16 @@ exports.enrollDevice = async (req, res) => {
         if (enrollTokenRes.rows.length > 0) {
             // New flow: enrollment_tokens table
             enrollmentRecord = enrollTokenRes.rows[0];
+
+            // 🛡️ SECURITY CHECK: Serial lock enforcement
+            // If the token was generated for a specific serial, only that serial can scan it.
+            if (enrollmentRecord.serial && enrollmentRecord.serial !== actualSerial) {
+                console.error(`🚨 ENROLL_REJECTED: Serial Mismatch. Expected: ${enrollmentRecord.serial}, Got: ${actualSerial}`);
+                return res.status(403).json({ 
+                    success: false, 
+                    message: "Security Violation: This QR code is locked to a different device serial number." 
+                });
+            }
 
             // Decrement remaining enrollments
             await pool.query(

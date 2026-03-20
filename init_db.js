@@ -184,18 +184,19 @@ async function initDB() {
       );
     `);
 
-    // 10. Device Enrollment Tokens
+    // 12. Enrollment Tokens (Jayakumar Spec)
     await client.query(`
       CREATE TABLE IF NOT EXISTS enrollment_tokens (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
         merchant_id UUID REFERENCES merchants(id) ON DELETE SET NULL,
-        device_profile_id UUID REFERENCES device_profiles(id) ON DELETE SET NULL,
+        device_profile_id UUID,
         token_hash TEXT NOT NULL UNIQUE,
+        serial TEXT,
         max_enrollments INTEGER NOT NULL DEFAULT 1,
         remaining_enrollments INTEGER NOT NULL DEFAULT 1,
         expires_at TIMESTAMPTZ NOT NULL,
-        created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_by UUID REFERENCES users(id),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
