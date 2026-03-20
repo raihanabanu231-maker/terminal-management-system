@@ -133,11 +133,11 @@ exports.enrollDevice = async (req, res) => {
 
             // 🛡️ SECURITY CHECK: Serial lock enforcement
             // If the token was generated for a specific serial, only that serial can scan it.
-            if (enrollmentRecord.serial && enrollmentRecord.serial !== actualSerial) {
-                console.error(`🚨 ENROLL_REJECTED: Serial Mismatch. Expected: ${enrollmentRecord.serial}, Got: ${actualSerial}`);
+            if (enrollmentRecord.serial && String(enrollmentRecord.serial).trim() !== String(actualSerial || "").trim()) {
+                console.error(`🚨 ENROLL_REJECTED: Serial Mismatch. Expected: [${enrollmentRecord.serial}], Got: [${actualSerial}]`);
                 return res.status(403).json({ 
                     success: false, 
-                    message: "Security Violation: This QR code is locked to a different device serial number." 
+                    message: `Security Violation: This QR code is locked to serial [${enrollmentRecord.serial}], but you sent [${actualSerial}].` 
                 });
             }
 
