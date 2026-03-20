@@ -2,10 +2,26 @@ const pool = require("../../config/db");
 
 // 1. Report Incident (From Device)
 exports.reportIncident = async (req, res) => {
-    const device_id = req.user.id;
+    const isDevice = req.user.role === "DEVICE";
+    const device_id = isDevice ? req.user.id : req.body.device_id;
     const { type, payload } = req.body;
 
+    if (!device_id) return res.status(400).json({ success: false, message: "device_id is required." });
+
+    // Validate UUID format to prevent 500 errors
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(device_id)) return res.status(400).json({ message: "Invalid device_id format. Must be a valid UUID." });
+
     try {
+        // Find device and check tenant scoping
+        const deviceRes = await pool.query("SELECT id, tenant_id, merchant_id FROM devices WHERE id = $1", [device_id]);
+        if (deviceRes.rows.length === 0) return res.status(404).json({ message: "Device not found" });
+
+        const device = deviceRes.rows[0];
+        if (!isDevice && device.tenant_id !== req.user.tenant_id) {
+            return res.status(403).json({ message: "Access Denied: Device belongs to another company." });
+        }
+
         // Find existing open incident of same type for this device
         const existing = await pool.query(
             "SELECT id FROM device_incidents WHERE device_id = $1 AND type = $2 AND status = 'open'",
@@ -13,14 +29,9 @@ exports.reportIncident = async (req, res) => {
         );
 
         let incidentId;
-
         if (existing.rows.length > 0) {
             incidentId = existing.rows[0].id;
         } else {
-            // Fetch device details for context
-            const deviceRes = await pool.query("SELECT tenant_id, merchant_id FROM devices WHERE id = $1", [device_id]);
-            const device = deviceRes.rows[0];
-
             // Create new incident
             const result = await pool.query(
                 `INSERT INTO device_incidents (device_id, tenant_id, merchant_id, type, first_seen)
@@ -39,7 +50,7 @@ exports.reportIncident = async (req, res) => {
         res.json({ success: true, incident_id: incidentId });
     } catch (error) {
         console.error("Report Incident Error:", error);
-        res.status(500).json({ message: "Server error" });
+        res.status(500).json({ message: "Server error", detail: error.message });
     }
 };
 
@@ -52,7 +63,11 @@ exports.reportTelemetry = async (req, res) => {
     const device_id = isDevice ? req.user.id : req.body.device_id;
     const { reported_at, ...payload } = req.body;
 
-    if (!device_id) return res.status(400).json({ success: false, message: "device_id is required when testing as Admin." });
+    if (!device_id) return res.status(400).json({ success: false, message: "device_id is required." });
+
+    // Validate UUID format to prevent 500 errors
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(device_id)) return res.status(400).json({ message: "Invalid device_id format. Must be a valid UUID." });
 
     try {
         // Security check: Only allow admins to post for devices in their own tenant
