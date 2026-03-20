@@ -45,20 +45,32 @@ exports.reportIncident = async (req, res) => {
 
 // 2. Report Telemetry (Vitals)
 exports.reportTelemetry = async (req, res) => {
-    const device_id = req.user.id;
-    const { reported_at, ...payload } = req.body; // Expecting reported_at and generic vitals
+    // 🛡️ DYNAMIC SCOPING: 
+    // If it's a DEVICE, we use the ID from the token (Secure).
+    // If it's an ADMIN/OPERATOR, we allow them to specify 'device_id' in the body for testing.
+    const isDevice = req.user.role === "DEVICE";
+    const device_id = isDevice ? req.user.id : req.body.device_id;
+    const { reported_at, ...payload } = req.body;
+
+    if (!device_id) return res.status(400).json({ success: false, message: "device_id is required when testing as Admin." });
 
     try {
+        // Security check: Only allow admins to post for devices in their own tenant
+        if (!isDevice) {
+            const devCheck = await pool.query("SELECT id FROM devices WHERE id = $1 AND tenant_id = $2", [device_id, req.user.tenant_id]);
+            if (devCheck.rows.length === 0) return res.status(403).json({ message: "Access Denied: You cannot post telemetry for a device outside your company." });
+        }
+
         await pool.query(
             `INSERT INTO device_telemetry (device_id, reported_at, payload)
              VALUES ($1, $2, $3)`,
             [device_id, reported_at || new Date(), payload || {}]
         );
 
-        res.json({ success: true });
+        res.json({ success: true, message: `Telemetry recorded for device ${device_id}` });
     } catch (error) {
         console.error("Report Telemetry Error:", error);
-        res.status(500).json({ message: "Server error" });
+        res.status(500).json({ message: "Server error", detail: error.message });
     }
 };
 
