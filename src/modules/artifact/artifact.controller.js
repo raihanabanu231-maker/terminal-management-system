@@ -28,6 +28,17 @@ exports.uploadArtifact = async (req, res) => {
     const tenantId = req.user.role === "SUPER_ADMIN" ? (req.body.tenant_id || req.user.tenant_id) : req.user.tenant_id;
 
     try {
+        // 🔒 SECURITY CHECK: Ensure Tenant is Active
+        const tenantRes = await pool.query(
+            "SELECT id, status, deleted_at FROM tenants WHERE id = $1",
+            [tenantId]
+        );
+
+        if (tenantRes.rows.length === 0 || tenantRes.rows[0].deleted_at || tenantRes.rows[0].status === 'deleted') {
+            if (req.file) fs.unlinkSync(req.file.path);
+            return res.status(403).json({ success: false, message: "Action Denied: This company/tenant is deleted or inactive. Uploads are disabled." });
+        }
+
         const binaryPath = req.file.path.replace(/\\/g, "/"); // Normalize for DB
 
         const result = await pool.query(
