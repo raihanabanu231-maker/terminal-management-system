@@ -73,12 +73,12 @@ router.post(
 );
 
 // Device Heartbeat (called by device, max 120/min)
-router.post("/heartbeat", verifyToken, authorizeRoles("DEVICE"), deviceRateLimit("heartbeat", 120), receiveHeartbeat);
+router.post("/heartbeat", verifyToken, authorizeRoles("DEVICE", "TENANT_ADMIN", "OPERATOR"), deviceRateLimit("heartbeat", 120), receiveHeartbeat);
 
 // Incidents & Telemetry
-router.post("/incidents", verifyToken, authorizeRoles("DEVICE"), reportIncident);
+router.post("/incidents", verifyToken, authorizeRoles("DEVICE", "TENANT_ADMIN", "OPERATOR"), reportIncident);
 router.get("/incidents", verifyToken, authorizeRoles("TENANT_ADMIN", "OPERATOR", "VIEWER"), getIncidents);
-router.post("/telemetry", verifyToken, authorizeRoles("DEVICE"), reportTelemetry);
+router.post("/telemetry", verifyToken, authorizeRoles("DEVICE", "TENANT_ADMIN", "OPERATOR"), reportTelemetry);
 
 // =============================================
 // DYNAMIC PATHS (/:id, /:deviceId, /:commandId)
