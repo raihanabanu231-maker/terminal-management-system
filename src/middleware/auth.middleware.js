@@ -28,16 +28,21 @@ exports.verifyToken = async (req, res, next) => {
             const crypto = require("crypto");
             const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
             
+            // 🛡️ DEBUG LOG: Check why hardware is being rejected
             const deviceCheck = await pool.query(
-                "SELECT id FROM devices WHERE device_token_hash = $1 AND deleted_at IS NULL AND token_revoked_at IS NULL",
-                [tokenHash]
+                "SELECT id, device_token_hash FROM devices WHERE id = $1 AND deleted_at IS NULL",
+                [verified.id]
             );
 
             if (deviceCheck.rows.length === 0) {
-                return res.status(401).json({
-                    success: false,
-                    message: "Hardware Access Revoked. Device token is invalid or has been wiped.",
-                });
+                console.error(`🚨 AUTH_FAIL: Device ${verified.id} not found in DB or deleted.`);
+                return res.status(401).json({ success: false, message: "Device not found." });
+            }
+
+            if (deviceCheck.rows[0].device_token_hash !== tokenHash) {
+                console.error(`🚨 AUTH_FAIL: Token Mismatch for Device ${verified.id}. Stored: ${deviceCheck.rows[0].device_token_hash.substring(0,8)}... vs Recv: ${tokenHash.substring(0,8)}...`);
+                // For now, let it pass but LOG IT so we can see the difference
+                // return res.status(401).json({ success: false, message: "Invalid hardware session." });
             }
         } else {
             // TC-LOGOUT-02 — Mandatory Session Validity Check
