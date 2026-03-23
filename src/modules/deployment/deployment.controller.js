@@ -94,6 +94,12 @@ async function resolveDeploymentTargets(deploymentId, target_type, target_id, te
         devices = devices.sort(() => Math.random() - 0.5).slice(0, targetCount);
     }
 
+    // If no devices were found, immediately close the deployment
+    if (devices.length === 0) {
+        await pool.query("UPDATE deployments SET status = 'completed' WHERE id = $1", [deploymentId]);
+        return;
+    }
+
     // Insert 1 row per device into deployment_targets (The per-device progress bar)
     for (const dev of devices) {
         await pool.query(
