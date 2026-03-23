@@ -203,10 +203,25 @@ exports.reportDeploymentEvent = async (req, res) => {
         if (event_type === 'install_failed') newStatus = 'failed';
 
         if (newStatus) {
+            // Update the single device's status
             await pool.query(
                 "UPDATE deployment_targets SET status = $1 WHERE deployment_id = $2 AND device_id = $3",
                 [newStatus, deployment_id, deviceId]
             );
+
+            // Check if this was the final device in the campaign
+            const pendingCheck = await pool.query(
+                "SELECT COUNT(*) FROM deployment_targets WHERE deployment_id = $1 AND status IN ('pending', 'in_progress')",
+                [deployment_id]
+            );
+
+            // If no devices are left pending/in_progress, mark the entire Campaign as Completed
+            if (parseInt(pendingCheck.rows[0].count) === 0) {
+                await pool.query(
+                    "UPDATE deployments SET status = 'completed' WHERE id = $1 AND status = 'in_progress'",
+                    [deployment_id]
+                );
+            }
         }
 
         res.json({ success: true });
