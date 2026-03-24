@@ -155,14 +155,18 @@ exports.enrollDevice = async (req, res) => {
             // Create or update device record
             if (actualSerial) {
                 const deviceRes = await pool.query(
-                    `INSERT INTO devices (serial, model, tenant_id, merchant_id, status, device_status)
-                     VALUES ($1, $2, $3, $4, 'active', 'online')
+                    `INSERT INTO devices (serial, model, tenant_id, merchant_id, status, device_status, android_id)
+                     VALUES ($1, $2, $3, $4, 'active', 'online', $5)
                      ON CONFLICT (serial) 
-                     DO UPDATE SET status = 'active', device_status = 'online', last_seen = NOW()
+                     DO UPDATE SET status = 'active', device_status = 'online', last_seen = NOW(), deleted_at = NULL, android_id = EXCLUDED.android_id
                      RETURNING *`,
-                    [actualSerial, device_model || 'Standard', enrollmentRecord.tenant_id, enrollmentRecord.merchant_id]
+                    [actualSerial, device_model || 'Standard', enrollmentRecord.tenant_id, enrollmentRecord.merchant_id, android_id || null]
                 );
                 device = deviceRes.rows[0];
+
+                // 🔥 CLEAN SLATE REQUIREMENT: The user specifically requested that re-enrolling 
+                // a device must completely destroy testing/historical telemetry so it provides a fresh UI.
+                await pool.query("DELETE FROM device_telemetry WHERE device_id = $1", [device.id]);
             }
         } else {
             // Fallback: old flow using devices table directly

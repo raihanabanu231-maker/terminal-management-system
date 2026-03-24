@@ -85,6 +85,7 @@ async function initDB() {
       CREATE TABLE IF NOT EXISTS devices (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         serial TEXT NOT NULL UNIQUE,
+        android_id TEXT,
         model TEXT NOT NULL,
         manufacturer TEXT,
         os_type TEXT NOT NULL,
