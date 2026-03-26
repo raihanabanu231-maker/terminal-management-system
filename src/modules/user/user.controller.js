@@ -50,7 +50,7 @@ exports.createRole = async (req, res) => {
 
 // 3. Invite User (High Security)
 exports.inviteUser = async (req, res) => {
-  let { email, role_id, role_name, tenant_id, merchant_id } = req.body;
+  let { email, role_id, role_name, tenant_id, merchant_id, first_name, last_name, web_app_url } = req.body;
 
   try {
     if (!email) return res.status(400).json({ success: false, message: "Email is required" });
@@ -58,7 +58,6 @@ exports.inviteUser = async (req, res) => {
     const finalTenantId = (req.user.role === "SUPER_ADMIN" && tenant_id) ? tenant_id : req.user.tenant_id;
 
     // --- SMART ROLE RESOLUTION ---
-    // If no UUID is sent, we look it up from the name!
     if (!role_id && role_name) {
         const roleLookup = await pool.query(
             "SELECT id FROM roles WHERE (name ILIKE $1) AND (tenant_id = $2 OR tenant_id IS NULL)",
@@ -73,28 +72,37 @@ exports.inviteUser = async (req, res) => {
     const scopeType = merchant_id ? 'merchant' : 'tenant';
     const scopeId = merchant_id || finalTenantId;
 
-    // Check if user already exists in this tenant
+    // Check if user already exists
     const existingUser = await pool.query("SELECT id FROM users WHERE email = $1 AND tenant_id = $2", [email, finalTenantId]);
     if (existingUser.rows.length > 0) return res.status(400).json({ message: "This user is already a member of this tenant." });
 
-    // Generate Token
     const rawToken = crypto.randomBytes(32).toString('hex');
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-    const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000); // 72 Hours
+    const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000);
 
-    // Insert Invitation (Sir Spec)
+    // Insert Invitation (Updated for Frontend spec)
     await pool.query(
       `INSERT INTO user_invitations 
-       (tenant_id, merchant_id, email, role_id, scope_type, scope_id, token_hash, expires_at, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [finalTenantId, merchant_id || null, email, role_id, scopeType, scopeId, tokenHash, expiresAt, req.user.id]
+       (tenant_id, merchant_id, email, first_name, last_name, role_id, scope_type, scope_id, token_hash, expires_at, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [finalTenantId, merchant_id || null, email, first_name || null, last_name || null, role_id, scopeType, scopeId, tokenHash, expiresAt, req.user.id]
     );
 
-    // Email logic
-    const frontendUrl = (process.env.FRONTEND_URL || "https://atpl-tms-frontend.onrender.com").replace(/\/$/, "");
-    const inviteLink = `${frontendUrl}/register?token=${rawToken}`;
+    // Email logic (Dynamic URL support)
+    let inviteLink;
+    if (web_app_url) {
+        // Append token to custom frontend URL
+        const separator = web_app_url.includes('?') ? '&' : '?';
+        inviteLink = `${web_app_url}${separator}token=${rawToken}`;
+    } else {
+        const frontendUrl = (process.env.FRONTEND_URL || "https://atpl-tms-frontend.onrender.com").replace(/\/$/, "");
+        inviteLink = `${frontendUrl}/register?token=${rawToken}`;
+    }
 
-    await sendInviteEmail(email, inviteLink, { companyName: "Enterprise TMS" });
+    await sendInviteEmail(email, inviteLink, { 
+        companyName: req.body.company_name || "Enterprise TMS",
+        name: first_name ? `${first_name} ${last_name}` : null
+    });
 
     await logAudit(finalTenantId, req.user.id, "user.invite", "USER_INVITATION", null, { email, scopeType });
 
