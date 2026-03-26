@@ -50,12 +50,26 @@ exports.createRole = async (req, res) => {
 
 // 3. Invite User (High Security)
 exports.inviteUser = async (req, res) => {
-  let { email, role_id, tenant_id, merchant_id } = req.body;
+  let { email, role_id, role_name, tenant_id, merchant_id } = req.body;
 
   try {
-    if (!email || !role_id) return res.status(400).json({ success: false, message: "Email and Role ID are required" });
+    if (!email) return res.status(400).json({ success: false, message: "Email is required" });
 
     const finalTenantId = (req.user.role === "SUPER_ADMIN" && tenant_id) ? tenant_id : req.user.tenant_id;
+
+    // --- SMART ROLE RESOLUTION ---
+    // If no UUID is sent, we look it up from the name!
+    if (!role_id && role_name) {
+        const roleLookup = await pool.query(
+            "SELECT id FROM roles WHERE (name ILIKE $1) AND (tenant_id = $2 OR tenant_id IS NULL)",
+            [role_name.trim(), finalTenantId]
+        );
+        if (roleLookup.rows.length === 0) return res.status(404).json({ success: false, message: `Role '${role_name}' not found.` });
+        role_id = roleLookup.rows[0].id;
+    }
+
+    if (!role_id) return res.status(400).json({ success: false, message: "Role ID or Role Name is required" });
+
     const scopeType = merchant_id ? 'merchant' : 'tenant';
     const scopeId = merchant_id || finalTenantId;
 
