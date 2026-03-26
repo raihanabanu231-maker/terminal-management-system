@@ -8,6 +8,7 @@ const {
     ackCommand,
     getDevices,
     getDeviceById,
+    getCommandStatus,
     updateDevice,
     deleteDevice,
     receiveHeartbeat,
@@ -106,6 +107,14 @@ router.post(
     verifyToken,
     authorizeRoles("DEVICE"),
     ackCommand
+);
+
+// Get Command Status (called by frontend to check if command is finished)
+router.get(
+    "/commands/:commandId/status",
+    verifyToken,
+    authorizeRoles("TENANT_ADMIN", "OPERATOR", "VIEWER"),
+    getCommandStatus
 );
 
 // Update Device

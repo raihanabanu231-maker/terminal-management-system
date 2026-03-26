@@ -332,7 +332,7 @@ exports.sendDeviceCommand = async (req, res) => {
         "REBOOT", "SHUTDOWN",
         "LOCK_DEVICE", "UNLOCK_DEVICE",
         "PASSWORD_UPDATE",
-        "TOGGLE_DEVELOPER_OPTIONS", "TOGGLE_DEVICE_LOGS",
+        "TOGGLE_DEVICE_LOGS",
         "TOGGLE_WIFI", "TOGGLE_BLUETOOTH",
         "SYNC", "WIPE", "INSTALL_ARTIFACT"
     ];
@@ -473,6 +473,30 @@ exports.ackCommand = async (req, res) => {
     } catch (error) {
         console.error("ACK ERROR:", error);
         res.status(500).json({ success: false, message: "Server error", detail: error.message });
+    }
+};
+
+// 4.6 Get Command Status (For Frontend to check if device is done)
+exports.getCommandStatus = async (req, res) => {
+    const { commandId } = req.params;
+
+    try {
+        const result = await pool.query(
+            "SELECT id, status, acked_at, payload, execution_time_ms FROM commands WHERE id = $1",
+            [commandId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ success: false, message: "Command not found" });
+        }
+
+        res.json({
+            success: true,
+            command: result.rows[0]
+        });
+    } catch (error) {
+        console.error("GET_COMMAND_STATUS_ERROR:", error);
+        res.status(500).json({ success: false, message: "Server error" });
     }
 };
 
