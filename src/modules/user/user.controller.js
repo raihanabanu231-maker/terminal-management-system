@@ -50,7 +50,7 @@ exports.createRole = async (req, res) => {
 
 // 3. Invite User (High Security)
 exports.inviteUser = async (req, res) => {
-  let { email, role_id, role_name, tenant_id, merchant_id, first_name, last_name, web_app_url } = req.body;
+  let { email, role_id, role_name, tenant_id, merchant_id, web_app_url } = req.body;
 
   try {
     if (!email) return res.status(400).json({ success: false, message: "Email is required" });
@@ -83,9 +83,9 @@ exports.inviteUser = async (req, res) => {
     // Insert Invitation (Updated for Frontend spec)
     await pool.query(
       `INSERT INTO user_invitations 
-       (tenant_id, merchant_id, email, first_name, last_name, role_id, scope_type, scope_id, token_hash, expires_at, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-      [finalTenantId, merchant_id || null, email, first_name || null, last_name || null, role_id, scopeType, scopeId, tokenHash, expiresAt, req.user.id]
+       (tenant_id, merchant_id, email, role_id, scope_type, scope_id, token_hash, expires_at, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [finalTenantId, merchant_id || null, email, role_id, scopeType, scopeId, tokenHash, expiresAt, req.user.id]
     );
 
     // Email logic (Dynamic URL support)
@@ -101,7 +101,7 @@ exports.inviteUser = async (req, res) => {
 
     await sendInviteEmail(email, inviteLink, { 
         companyName: req.body.company_name || "Enterprise TMS",
-        name: first_name ? `${first_name} ${last_name}` : null
+        roleName: role_name || "Team Member"
     });
 
     await logAudit(finalTenantId, req.user.id, "user.invite", "USER_INVITATION", null, { email, scopeType });
