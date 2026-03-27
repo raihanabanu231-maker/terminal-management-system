@@ -6,10 +6,10 @@ exports.sendInviteEmail = async (toEmail, inviteLink, details = {}) => {
 
   // 🔐 Late-binding the API key and instance to ensure it captures Render Environment changes
   const apiKey = defaultClient.authentications['api-key'];
-  apiKey.apiKey = process.env.MAIL_SERVICE_KEY;
+  apiKey.apiKey = process.env.BREVO_API_KEY;
   const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
 
-  console.log(`📧 Attempting Email to: ${toEmail}. Key Prefix: ${process.env.MAIL_SERVICE_KEY ? process.env.MAIL_SERVICE_KEY.substring(0, 10) + "..." : "MISSING"}`);
+  console.log(`📧 Attempting Email to: ${toEmail}. Key Prefix: ${process.env.BREVO_API_KEY ? process.env.BREVO_API_KEY.substring(0, 10) + "..." : "MISSING"}`);
 
   try {
     const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
