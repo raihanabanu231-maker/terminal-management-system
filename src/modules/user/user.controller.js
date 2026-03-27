@@ -63,7 +63,7 @@ exports.inviteUser = async (req, res) => {
         const lookupName = role_name.trim().replace(/\s+/g, '_').toUpperCase();
 
         const roleLookup = await pool.query(
-            "SELECT id FROM roles WHERE (name = $1 OR name ILIKE $2) AND (tenant_id = $2 OR tenant_id IS NULL)",
+            "SELECT id FROM roles WHERE (name = $1 OR name ILIKE $1) AND (tenant_id = $2 OR tenant_id IS NULL)",
             [lookupName, finalTenantId]
         );
         if (roleLookup.rows.length === 0) return res.status(404).json({ success: false, message: `Role '${role_name}' / '${lookupName}' not found.` });
