@@ -83,8 +83,9 @@ exports.inviteUser = async (req, res) => {
         });
     }
 
-    const scopeType = merchant_id ? 'merchant' : 'tenant';
-    const scopeId = merchant_id || finalTenantId;
+    const scopeType = (merchant_id && merchant_id !== finalTenantId) ? 'merchant' : 'tenant';
+    const finalMerchantId = (scopeType === 'merchant') ? merchant_id : null;
+    const scopeId = finalMerchantId || finalTenantId;
 
     // Check if user already exists
     const existingUser = await pool.query("SELECT id FROM users WHERE email = $1 AND tenant_id = $2", [email, finalTenantId]);
@@ -100,7 +101,7 @@ exports.inviteUser = async (req, res) => {
        (tenant_id, merchant_id, email, role_id, scope_type, scope_id, token_hash, expires_at, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING id`,
-      [finalTenantId, merchant_id || null, email, role_id, scopeType, scopeId, tokenHash, expiresAt, req.user.id]
+      [finalTenantId, finalMerchantId, email, role_id, scopeType, scopeId, tokenHash, expiresAt, req.user.id]
     );
 
     const inviteId = result.rows[0].id;
@@ -132,13 +133,7 @@ exports.inviteUser = async (req, res) => {
 
   } catch (error) {
     console.error("INVITE_ERROR:", error);
-    res.status(500).json({ 
-        success: false, 
-        message: "Server error during invitation", 
-        error_detail: error.message, 
-        error_code: error.code,
-        error_stack: error.stack 
-    });
+    res.status(500).json({ success: false, message: "Server error during invitation" });
   }
 };
 
