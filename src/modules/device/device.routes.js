@@ -121,7 +121,7 @@ router.get(
 router.put(
     "/:id",
     verifyToken,
-    authorizeRoles("TENANT_ADMIN", "OPERATOR", "SUPER_ADMIN"),
+    authorizeRoles("TENANT_ADMIN", "OPERATOR"),
     updateDevice
 );
 
@@ -129,7 +129,7 @@ router.put(
 router.delete(
     "/:id",
     verifyToken,
-    authorizeRoles("TENANT_ADMIN", "OPERATOR", "SUPER_ADMIN"),
+    authorizeRoles("TENANT_ADMIN", "OPERATOR"),
     deleteDevice
 );
 

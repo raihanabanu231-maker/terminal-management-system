@@ -32,7 +32,7 @@ const upload = multer({
 router.get(
     "/",
     verifyToken,
-    authorizeRoles("TENANT_ADMIN", "OPERATOR", "VIEWER", "SUPER_ADMIN"),
+    authorizeRoles("TENANT_ADMIN", "OPERATOR", "VIEWER"),
     getArtifacts
 );
 
@@ -48,7 +48,7 @@ router.get(
 router.post(
     "/upload",
     verifyToken,
-    authorizeRoles("TENANT_ADMIN", "SUPER_ADMIN"),
+    authorizeRoles("TENANT_ADMIN"),
     upload.single("file"),
     uploadArtifact
 );
@@ -65,7 +65,7 @@ router.post(
 router.delete(
     "/:id",
     verifyToken,
-    authorizeRoles("TENANT_ADMIN", "SUPER_ADMIN"),
+    authorizeRoles("TENANT_ADMIN"),
     deleteArtifact
 );
 

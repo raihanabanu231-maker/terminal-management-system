@@ -69,6 +69,17 @@ exports.inviteUser = async (req, res) => {
 
     if (!role_id) return res.status(400).json({ success: false, message: "Role ID or Role Name is required" });
 
+    // 🔒 SECURITY: Role Escalation Protection
+    const roleCheck = await pool.query("SELECT name FROM roles WHERE id = $1", [role_id]);
+    const targetRoleName = roleCheck.rows[0]?.name;
+
+    if (req.user.role !== 'SUPER_ADMIN' && targetRoleName === 'SUPER_ADMIN') {
+        return res.status(403).json({
+            success: false, 
+            message: "Security Violation: Only a Super Admin can invite another Super Admin. As a Tenant Admin, you can invite other Tenant Admins or Operators."
+        });
+    }
+
     const scopeType = merchant_id ? 'merchant' : 'tenant';
     const scopeId = merchant_id || finalTenantId;
 
@@ -81,12 +92,15 @@ exports.inviteUser = async (req, res) => {
     const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000);
 
     // Insert Invitation (Updated for Frontend spec)
-    await pool.query(
+    const result = await pool.query(
       `INSERT INTO user_invitations 
        (tenant_id, merchant_id, email, role_id, scope_type, scope_id, token_hash, expires_at, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id`,
       [finalTenantId, merchant_id || null, email, role_id, scopeType, scopeId, tokenHash, expiresAt, req.user.id]
     );
+
+    const inviteId = result.rows[0].id;
 
     // Email logic (Dynamic URL support)
     let inviteLink;
@@ -104,7 +118,7 @@ exports.inviteUser = async (req, res) => {
         roleName: role_name || "Team Member"
     });
 
-    await logAudit(finalTenantId, req.user.id, "user.invite", "USER_INVITATION", null, { email, scopeType });
+    await logAudit(finalTenantId, req.user.id, "user.invite", "USER_INVITATION", inviteId, { email, scopeType });
 
     res.status(201).json({
       success: true,

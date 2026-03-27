@@ -14,7 +14,7 @@ const { authorizeRoles } = require("../../middleware/role.middleware");
 router.post(
     "/",
     verifyToken,
-    authorizeRoles("TENANT_ADMIN", "SUPER_ADMIN"),
+    authorizeRoles("TENANT_ADMIN"),
     createDeployment
 );
 
@@ -22,7 +22,7 @@ router.post(
 router.get(
     "/:id/status",
     verifyToken,
-    authorizeRoles("TENANT_ADMIN", "OPERATOR", "VIEWER", "SUPER_ADMIN"),
+    authorizeRoles("TENANT_ADMIN", "OPERATOR", "VIEWER"),
     getDeploymentStatus
 );
 

@@ -369,8 +369,27 @@ exports.sendDeviceCommand = async (req, res) => {
         );
 
         const commandId = cmdRes.rows[0].id;
+        
+        // 🎯 FULL COMMAND AUDIT: Map all commands to descriptive labels
+        let auditAction = `COMMAND_${type}`;
+        if (type === "TOGGLE_BLUETOOTH" || type === "TOGGLE_WIFI") {
+            const state = payload?.state ? String(payload.state).toUpperCase() : "TOGGLE";
+            auditAction = `DEVICE_${type.substring(7)}_${state}`; // e.g., DEVICE_BLUETOOTH_ON
+        } else if (type === "REBOOT" || type === "SHUTDOWN" || type === "WIPE") {
+            auditAction = `DEVICE_${type}_INITIATED`;
+        } else if (type === "SYNC") {
+            auditAction = "DEVICE_SYNC_REQUESTED";
+        } else if (type === "INSTALL_ARTIFACT") {
+            auditAction = `DEVICE_ARTIFACT_UPDATE_SENT`;
+        }
 
-        await logAudit(device.tenant_id, req.user.id, "command.send", "DEVICE", deviceId, { type, command_id: commandId });
+        await logAudit(device.tenant_id, req.user.id, auditAction, "DEVICE", deviceId, { 
+            type, 
+            command_id: commandId,
+            payload: payload 
+        });
+        
+        // Ensure success/failure result shows in the table as well
 
         const { sendCommand } = require("../../gateway/socket.gateway");
         const success = sendCommand(deviceId, {
@@ -448,9 +467,26 @@ exports.ackCommand = async (req, res) => {
                  WHERE id = $3`,
                 [execution_time_ms || null, JSON.stringify({ result_data }), commandId]
             );
-            await logAudit(null, null, "COMMAND_ACKED", "DEVICE", deviceId, { command_id: commandId, execution_time_ms });
+            // Fetch the device's tenant ID for correct audit scoping
+            const deviceCheck = await pool.query("SELECT tenant_id FROM devices WHERE id = $1", [deviceId]);
+            const tenantId = deviceCheck.rows[0]?.tenant_id;
+            
+            let auditAction = `COMMAND_${cmd.type}_SUCCESS`;
+            if (cmd.type === "TOGGLE_BLUETOOTH" || cmd.type === "TOGGLE_WIFI") {
+                const state = cmd.payload?.state ? String(cmd.payload.state).toUpperCase() : "SUCCESS";
+                auditAction = `DEVICE_${cmd.type.substring(7)}_${state}_SUCCESS`;
+            } else if (cmd.type === "REBOOT" || cmd.type === "WIPE") {
+                auditAction = `DEVICE_${cmd.type}_SUCCESS`;
+            }
+
+            await logAudit(tenantId || null, null, auditAction, "DEVICE", deviceId, { 
+                command_id: commandId, 
+                execution_time_ms,
+                type: cmd.type 
+            });
         } else {
             if (cmd.retry_count < cmd.max_retries) {
+                // ... (Retry logic, no change needed here)
                 await pool.query(
                     `UPDATE commands 
                      SET status = 'queued', retry_count = retry_count + 1, payload = payload || $1::jsonb 
@@ -464,7 +500,16 @@ exports.ackCommand = async (req, res) => {
                      WHERE id = $2`,
                     [JSON.stringify({ result_data, error_message, final_failure: true }), commandId]
                 );
-                await logAudit(null, null, "COMMAND_FAILED", "DEVICE", deviceId, { command_id: commandId, error_message });
+                
+                const deviceCheck = await pool.query("SELECT tenant_id FROM devices WHERE id = $1", [deviceId]);
+                const tenantId = deviceCheck.rows[0]?.tenant_id;
+                
+                let auditAction = `COMMAND_${cmd.type}_FAILURE`;
+                await logAudit(tenantId || null, null, auditAction, "DEVICE", deviceId, { 
+                    command_id: commandId, 
+                    error_message, 
+                    type: cmd.type 
+                });
             }
         }
 
@@ -650,7 +695,10 @@ exports.startStatusJob = () => {
             // Audit log for devices going offline
             if (offlineRes.rowCount > 0) {
                 for (const row of offlineRes.rows) {
-                    await logAudit(null, null, "DEVICE_OFFLINE", "DEVICE", row.id, { reason: "heartbeat_timeout" });
+                    // Fetch the device's tenant ID for correct audit scoping
+                    const deviceCheck = await pool.query("SELECT tenant_id FROM devices WHERE id = $1", [row.id]);
+                    const tenantId = deviceCheck.rows[0]?.tenant_id;
+                    await logAudit(tenantId || null, null, "DEVICE_OFFLINE", "DEVICE", row.id, { reason: "heartbeat_timeout" });
                 }
             }
 
@@ -674,7 +722,10 @@ exports.startStatusJob = () => {
             // Audit log for devices coming online
             if (onlineRes.rowCount > 0) {
                 for (const row of onlineRes.rows) {
-                    await logAudit(null, null, "DEVICE_ONLINE", "DEVICE", row.id, { reason: "heartbeat_received" });
+                    // Fetch the device's tenant ID for correct audit scoping
+                    const deviceCheck = await pool.query("SELECT tenant_id FROM devices WHERE id = $1", [row.id]);
+                    const tenantId = deviceCheck.rows[0]?.tenant_id;
+                    await logAudit(tenantId || null, null, "DEVICE_ONLINE", "DEVICE", row.id, { reason: "heartbeat_received" });
                 }
             }
         } catch (error) {
@@ -730,7 +781,10 @@ exports.startRetryJob = () => {
             if (res.rowCount > 0) {
                 console.log(`🔄 Retried ${res.rowCount} unacknowledged commands.`);
                 for (const row of res.rows) {
-                    await logAudit(null, null, "COMMAND_RETRY", "DEVICE", row.device_id, {
+                    // Fetch the device's tenant ID for correct audit scoping
+                    const deviceCheck = await pool.query("SELECT tenant_id FROM devices WHERE id = $1", [row.device_id]);
+                    const tenantId = deviceCheck.rows[0]?.tenant_id;
+                    await logAudit(tenantId || null, null, "COMMAND_RETRY", "DEVICE", row.device_id, {
                         command_id: row.id,
                         attempt: row.retry_count
                     });
@@ -749,7 +803,10 @@ exports.startRetryJob = () => {
             if (failedRes.rowCount > 0) {
                 console.log(`❌ Failed ${failedRes.rowCount} commands (max retries exceeded).`);
                 for (const row of failedRes.rows) {
-                    await logAudit(null, null, "COMMAND_FAILED", "DEVICE", row.device_id, {
+                    // Fetch the device's tenant ID for correct audit scoping
+                    const deviceCheck = await pool.query("SELECT tenant_id FROM devices WHERE id = $1", [row.device_id]);
+                    const tenantId = deviceCheck.rows[0]?.tenant_id;
+                    await logAudit(tenantId || null, null, "COMMAND_FAILED", "DEVICE", row.device_id, {
                         command_id: row.id,
                         reason: "max_retries_exceeded"
                     });
