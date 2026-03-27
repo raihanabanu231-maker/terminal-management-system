@@ -57,13 +57,16 @@ exports.inviteUser = async (req, res) => {
 
     const finalTenantId = (req.user.role === "SUPER_ADMIN" && tenant_id) ? tenant_id : req.user.tenant_id;
 
-    // --- SMART ROLE RESOLUTION ---
+    // --- SMART ROLE RESOLUTION (Matches Frontend 'tenant admin' to 'TENANT_ADMIN') ---
     if (!role_id && role_name) {
+        // Automatically translate spaces to underscores and make UPPERCASE (e.g. 'tenant admin' -> 'TENANT_ADMIN')
+        const lookupName = role_name.trim().replace(/\s+/g, '_').toUpperCase();
+
         const roleLookup = await pool.query(
-            "SELECT id FROM roles WHERE (name ILIKE $1) AND (tenant_id = $2 OR tenant_id IS NULL)",
-            [role_name.trim(), finalTenantId]
+            "SELECT id FROM roles WHERE (name = $1 OR name ILIKE $2) AND (tenant_id = $2 OR tenant_id IS NULL)",
+            [lookupName, finalTenantId]
         );
-        if (roleLookup.rows.length === 0) return res.status(404).json({ success: false, message: `Role '${role_name}' not found.` });
+        if (roleLookup.rows.length === 0) return res.status(404).json({ success: false, message: `Role '${role_name}' / '${lookupName}' not found.` });
         role_id = roleLookup.rows[0].id;
     }
 
