@@ -132,7 +132,13 @@ exports.inviteUser = async (req, res) => {
 
   } catch (error) {
     console.error("INVITE_ERROR:", error);
-    res.status(500).json({ success: false, message: "Server error during invitation" });
+    res.status(500).json({ 
+        success: false, 
+        message: "Server error during invitation", 
+        error_detail: error.message, 
+        error_code: error.code,
+        error_stack: error.stack 
+    });
   }
 };
 
