@@ -32,33 +32,42 @@ exports.createGroup = async (req, res) => {
     const { tenant_id, id: userId, role } = req.user;
     const userScope = getUserScope(req);
 
-    if (!name || !merchant_id) {
-        return res.status(400).json({ success: false, message: "Group name and merchant_id are required" });
+    if (!name) {
+        return res.status(400).json({ success: false, message: "Group name is required" });
     }
 
     try {
-        // Fetch target merchant path for normalization & validation
-        const merchRes = await pool.query("SELECT tenant_id, name_path FROM merchants WHERE id = $1", [merchant_id]);
-        if (merchRes.rows.length === 0) {
-            return res.status(404).json({ success: false, message: "Merchant not found" });
-        }
+        let targetMerchantPath = "/";
+        let finalMerchantId = merchant_id;
 
-        if (merchRes.rows[0].tenant_id !== tenant_id && role !== "SUPER_ADMIN") {
-            return res.status(403).json({ success: false, message: "Forbidden: Tenant mismatch" });
-        }
+        if (merchant_id) {
+            // Fetch target merchant path for normalization & validation
+            const merchRes = await pool.query("SELECT tenant_id, name_path FROM merchants WHERE id = $1", [merchant_id]);
+            if (merchRes.rows.length === 0) {
+                return res.status(404).json({ success: false, message: "Merchant not found" });
+            }
 
-        const targetMerchantPath = normalizePath(merchRes.rows[0].name_path);
+            if (merchRes.rows[0].tenant_id !== tenant_id && role !== "SUPER_ADMIN") {
+                return res.status(403).json({ success: false, message: "Forbidden: Tenant mismatch" });
+            }
+
+            targetMerchantPath = normalizePath(merchRes.rows[0].name_path);
+        } else {
+            // Case where no merchant_id is provided, anchor to root of tenant
+            targetMerchantPath = "/";
+            finalMerchantId = null;
+        }
 
         // 🛡️ SECURITY: Prefix-based validation
         if (!targetMerchantPath.startsWith(userScope)) {
-            return res.status(403).json({ success: false, message: "Unauthorized: Branch outside of your scope" });
+            return res.status(403).json({ success: false, message: "Unauthorized: Target branch is outside of your scope" });
         }
 
         const result = await pool.query(
             `INSERT INTO device_groups (tenant_id, merchant_id, merchant_path, name, description)
              VALUES ($1, $2, $3, $4, $5)
              RETURNING *`,
-            [tenant_id, merchant_id, targetMerchantPath, name, description]
+            [tenant_id, finalMerchantId, targetMerchantPath, name, description]
         );
 
         const newGroup = result.rows[0];
@@ -86,10 +95,10 @@ exports.getGroups = async (req, res) => {
             SELECT dg.*, 
                    (SELECT COUNT(*) FROM device_group_members WHERE group_id = dg.id) as device_count,
                    t.name as tenant_name,
-                   m.name as merchant_name
+                   COALESCE(m.name, 'Tenant Wide') as merchant_name
             FROM device_groups dg
             JOIN tenants t ON dg.tenant_id = t.id
-            JOIN merchants m ON dg.merchant_id = m.id
+            LEFT JOIN merchants m ON dg.merchant_id = m.id
             WHERE dg.tenant_id = $1 
             AND dg.merchant_path LIKE $2 || '%'
             AND dg.deleted_at IS NULL
@@ -113,10 +122,10 @@ exports.getGroupById = async (req, res) => {
 
     try {
         const groupRes = await pool.query(
-            `SELECT dg.*, t.name as tenant_name, m.name as merchant_name
+            `SELECT dg.*, t.name as tenant_name, COALESCE(m.name, 'Tenant Wide') as merchant_name
              FROM device_groups dg
              JOIN tenants t ON dg.tenant_id = t.id
-             JOIN merchants m ON dg.merchant_id = m.id
+             LEFT JOIN merchants m ON dg.merchant_id = m.id
              WHERE dg.id = $1 AND dg.deleted_at IS NULL`,
             [id]
         );

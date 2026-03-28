@@ -24,7 +24,7 @@ async function applyArchitectSpec() {
             CREATE TABLE device_groups (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-                merchant_id UUID NOT NULL REFERENCES merchants(id) ON DELETE CASCADE,
+                merchant_id UUID REFERENCES merchants(id) ON DELETE CASCADE,
                 merchant_path TEXT NOT NULL,
                 name TEXT NOT NULL,
                 description TEXT,
