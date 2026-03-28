@@ -152,15 +152,24 @@ exports.enrollDevice = async (req, res) => {
                 [enrollmentRecord.id]
             );
 
+            // Setup normalized merchant path if applicable
+            let normalizedPath = "/";
+            if (enrollmentRecord.merchant_id) {
+                const merchInfo = await pool.query("SELECT name_path FROM merchants WHERE id = $1", [enrollmentRecord.merchant_id]);
+                if (merchInfo.rows[0]?.name_path) {
+                    normalizedPath = merchInfo.rows[0].name_path.toLowerCase().trim().replace(/\/$/, '') + '/';
+                }
+            }
+
             // Create or update device record
             if (actualSerial) {
                 const deviceRes = await pool.query(
-                    `INSERT INTO devices (serial, model, tenant_id, merchant_id, status, device_status, android_id)
-                     VALUES ($1, $2, $3, $4, 'active', 'online', $5)
+                    `INSERT INTO devices (serial, model, tenant_id, merchant_id, merchant_path, status, device_status)
+                     VALUES ($1, $2, $3, $4, $5, 'active', 'online')
                      ON CONFLICT (serial) 
-                     DO UPDATE SET status = 'active', device_status = 'online', last_seen = NOW(), deleted_at = NULL, android_id = EXCLUDED.android_id
+                     DO UPDATE SET status = 'active', device_status = 'online', merchant_path = EXCLUDED.merchant_path, last_seen = NOW(), deleted_at = NULL
                      RETURNING *`,
-                    [actualSerial, device_model || 'Standard', enrollmentRecord.tenant_id, enrollmentRecord.merchant_id, android_id || null]
+                    [actualSerial, device_model || 'Standard', enrollmentRecord.tenant_id, enrollmentRecord.merchant_id, normalizedPath]
                 );
                 device = deviceRes.rows[0];
 

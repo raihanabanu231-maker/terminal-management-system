@@ -17,6 +17,7 @@ const artifactRoutes = require("./modules/artifact/artifact.routes");
 const deploymentRoutes = require("./modules/deployment/deployment.routes");
 const dashboardRoutes = require("./modules/dashboard/dashboard.routes");
 const auditRoutes = require("./modules/audit/audit.routes");
+const deviceGroupRoutes = require("./modules/device/deviceGroup.routes");
 
 const app = express();
 
@@ -65,6 +66,7 @@ app.use(`${API_V1}/artifacts`, artifactRoutes);
 app.use(`${API_V1}/deployments`, deploymentRoutes);
 app.use(`${API_V1}/dashboard`, dashboardRoutes);
 app.use(`${API_V1}/audit`, auditRoutes);
+app.use(`${API_V1}/groups`, deviceGroupRoutes); // V7 Spec
 
 // Default test route
 app.get("/", (req, res) => {

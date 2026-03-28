@@ -57,6 +57,11 @@ exports.inviteUser = async (req, res) => {
 
     const finalTenantId = (req.user.role === "SUPER_ADMIN" && tenant_id) ? tenant_id : req.user.tenant_id;
 
+    // --- SANITIZE MERCHANT_ID (Standard across all features) ---
+    if (merchant_id === "null" || merchant_id === "undefined" || merchant_id === "" || merchant_id === finalTenantId) {
+        merchant_id = null;
+    }
+
     // --- SMART ROLE RESOLUTION (Matches Frontend 'tenant admin' to 'TENANT_ADMIN') ---
     if (!role_id && role_name) {
         // Automatically translate spaces to underscores and make UPPERCASE (e.g. 'tenant admin' -> 'TENANT_ADMIN')

@@ -79,9 +79,10 @@ exports.login = async (req, res) => {
     );
 
     const roleResult = await pool.query(
-      `SELECT r.name, ur.role_id, ur.scope_type, ur.scope_id 
+      `SELECT r.name, ur.role_id, ur.scope_type, ur.scope_id, m.name_path as scope_path
        FROM user_roles ur
        JOIN roles r ON ur.role_id = r.id
+       LEFT JOIN merchants m ON ur.scope_id = m.id
        WHERE ur.user_id = $1`,
       [user.id]
     );
@@ -96,7 +97,13 @@ exports.login = async (req, res) => {
       id: user.id,
       tenant_id: user.tenant_id,
       jti: jti,
-      roles: roles.map(r => ({ name: r.name, id: r.role_id, scope: r.scope_type, scope_id: r.scope_id })),
+      roles: roles.map(r => ({ 
+          name: r.name, 
+          id: r.role_id, 
+          scope: r.scope_type, 
+          scope_id: r.scope_id, 
+          scope_path: r.scope_type === 'merchant' ? (r.scope_path ? r.scope_path.toLowerCase().trim().replace(/\/$/, '') + '/' : '/') : '/'
+      })),
       role: (roles[0]?.name || "USER").trim().toUpperCase().replace(/\s+/g, "_")
     };
 

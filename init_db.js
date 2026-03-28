@@ -39,6 +39,7 @@ async function initDB() {
         external_id TEXT,
         level INTEGER NOT NULL DEFAULT 0,
         path TEXT NOT NULL,
+        name_path TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         deleted_at TIMESTAMPTZ
       );
@@ -85,7 +86,6 @@ async function initDB() {
       CREATE TABLE IF NOT EXISTS devices (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         serial TEXT NOT NULL UNIQUE,
-        android_id TEXT,
         model TEXT NOT NULL,
         manufacturer TEXT,
         os_type TEXT NOT NULL,
@@ -93,6 +93,7 @@ async function initDB() {
         capabilities JSONB NOT NULL DEFAULT '{}'::jsonb,
         tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
         merchant_id UUID REFERENCES merchants(id) ON DELETE SET NULL,
+        merchant_path TEXT,
         profile_id UUID REFERENCES device_profiles(id) ON DELETE SET NULL,
         status TEXT NOT NULL DEFAULT 'pending_onboard',
         last_seen TIMESTAMPTZ,
@@ -184,6 +185,31 @@ async function initDB() {
         status TEXT NOT NULL DEFAULT 'pending'
       );
     `);
+ 
+    // 10. Device Groups (V7 Spec)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS device_groups (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        merchant_id UUID NOT NULL REFERENCES merchants(id) ON DELETE CASCADE,
+        merchant_path TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        deleted_at TIMESTAMPTZ,
+        UNIQUE (tenant_id, merchant_id, name)
+      );
+    `);
+ 
+    // 10b. Device Group Members
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS device_group_members (
+        group_id UUID NOT NULL REFERENCES device_groups(id) ON DELETE CASCADE,
+        device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        PRIMARY KEY (group_id, device_id)
+      );
+    `);
 
     // 12. Enrollment Tokens (Jayakumar Spec)
     await client.query(`
@@ -224,9 +250,11 @@ async function initDB() {
     // 13. Device Rate Limits
     await client.query(`
       CREATE TABLE IF NOT EXISTS device_rate_limits (
-        device_id UUID PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+        device_id UUID REFERENCES devices(id) ON DELETE CASCADE,
+        endpoint TEXT NOT NULL,
         window_start TIMESTAMPTZ,
-        request_count INTEGER DEFAULT 0
+        request_count INTEGER DEFAULT 0,
+        PRIMARY KEY (device_id, endpoint)
       );
     `);
 
@@ -289,7 +317,8 @@ async function initDB() {
         device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
         status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed', 'failed')),
         last_error TEXT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
 
@@ -397,6 +426,8 @@ async function initDB() {
       CREATE INDEX IF NOT EXISTS idx_audit_logs_resource ON audit_logs(resource_type, resource_id);
       CREATE INDEX IF NOT EXISTS idx_commands_status ON commands(status);
       CREATE INDEX IF NOT EXISTS idx_telemetry_device ON device_telemetry(device_id, reported_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_groups_merchant_path ON device_groups(merchant_path);
+      CREATE INDEX IF NOT EXISTS idx_devices_merchant_path ON devices(merchant_path);
     `);
 
     // Seed Initial Data
