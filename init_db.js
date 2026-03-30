@@ -121,7 +121,6 @@ async function initDB() {
         first_name TEXT,
         last_name TEXT,
         mobile TEXT,
-        invited BOOLEAN NOT NULL DEFAULT false,
         status TEXT NOT NULL DEFAULT 'pending',
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         deleted_at TIMESTAMPTZ,
