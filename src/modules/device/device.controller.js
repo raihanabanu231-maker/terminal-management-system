@@ -657,7 +657,18 @@ exports.receiveHeartbeat = async (req, res) => {
         try {
             await client.query("BEGIN");
 
-            // 1. Insert/Update the isolated heartbeat tracker
+            // 1. Fetch Audit Logging Configuration (Merchant fallback to Tenant)
+            const configRes = await client.query(`
+                SELECT COALESCE(m.audit_logging_enabled, t.audit_logging_enabled) as audit_logging_enabled
+                FROM devices d
+                JOIN tenants t ON d.tenant_id = t.id
+                LEFT JOIN merchants m ON d.merchant_id = m.id
+                WHERE d.id = $1
+            `, [deviceId]);
+
+            const auditEnabled = configRes.rows[0]?.audit_logging_enabled ?? true;
+
+            // 2. Insert/Update the isolated heartbeat tracker
             await client.query(
                 `INSERT INTO device_heartbeats (device_id, last_seen)
                  VALUES ($1, $2)
@@ -666,14 +677,20 @@ exports.receiveHeartbeat = async (req, res) => {
                 [deviceId, reported_at || new Date()]
             );
 
-            // 2. Update the parent device record to mark it as currently "Online"
+            // 3. Update the parent device record to mark it as currently "Online"
             await client.query(
                 `UPDATE devices SET last_seen = NOW(), status = 'active' WHERE id = $1`,
                 [deviceId]
             );
 
             await client.query("COMMIT");
-            res.json({ success: true, message: "Heartbeat acknowledged" });
+            
+            // Return 'audit_logging_enabled' to the device
+            res.json({ 
+                success: true, 
+                message: "Heartbeat acknowledged", 
+                audit_logging_enabled: auditEnabled 
+            });
 
         } catch (txnError) {
             await client.query("ROLLBACK");

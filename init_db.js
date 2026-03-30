@@ -22,8 +22,10 @@ async function initDB() {
     await client.query(`
       CREATE TABLE IF NOT EXISTS tenants (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        name TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'active',
+        name TEXT UNIQUE NOT NULL,
+        logo_url TEXT,
+        primary_color TEXT,
+        audit_logging_enabled BOOLEAN NOT NULL DEFAULT true,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         deleted_at TIMESTAMPTZ
       );
@@ -40,6 +42,7 @@ async function initDB() {
         level INTEGER NOT NULL DEFAULT 0,
         path TEXT NOT NULL,
         name_path TEXT,
+        audit_logging_enabled BOOLEAN, 
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         deleted_at TIMESTAMPTZ
       );
@@ -375,6 +378,20 @@ async function initDB() {
         old_values JSONB,
         new_values JSONB NOT NULL,
         checksum TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    // 19b. Device Audit Logs (New Requirement)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS device_audit_logs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        merchant_id UUID REFERENCES merchants(id) ON DELETE SET NULL,
+        event_type TEXT NOT NULL,
+        message TEXT NOT NULL,
+        timestamp TIMESTAMPTZ NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
