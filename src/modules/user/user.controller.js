@@ -144,28 +144,55 @@ exports.inviteUser = async (req, res) => {
 
 // 4. List Users (with Roles)
 exports.getUsers = async (req, res) => {
-  try {
-    let query = `
-      SELECT u.id, u.email, u.first_name, u.last_name, u.status, u.created_at,
-             t.name as tenant_name,
-             array_agg(r.name) as roles
-      FROM users u
-      LEFT JOIN tenants t ON u.tenant_id = t.id
-      LEFT JOIN user_roles ur ON u.id = ur.user_id
-      LEFT JOIN roles r ON ur.role_id = r.id
-      WHERE u.deleted_at IS NULL
-    `;
-    const params = [];
+    try {
+        const { role: userRole, tenant_id: userTenantId } = req.user;
 
-    if (req.user.role !== "SUPER_ADMIN") {
-      params.push(req.user.tenant_id);
-      query += ` AND u.tenant_id = $1`;
-    }
+        // 🎯 V7 HELPER: Get User Scope Path
+        const roles = req.user.roles || [];
+        let userScopePath = "/";
+        if (userRole !== "SUPER_ADMIN") {
+            const merchantRoles = roles.filter(r => r.scope === "merchant");
+            if (merchantRoles.length > 0) {
+                userScopePath = merchantRoles[0].scope_path;
+            }
+        }
 
-    query += ` GROUP BY u.id, t.name ORDER BY u.created_at DESC`;
+        // We use a Subquery/Join to only show users who have at least one role 
+        // that falls within our hierarchical scope.
+        let query = `
+            SELECT 
+                u.id, u.email, u.first_name, u.last_name, u.status, u.created_at,
+                json_agg(json_build_object(
+                    'role', r.name,
+                    'scope_type', ur.scope_type,
+                    'branch_name', COALESCE(m.name, 'Tenant Wide'),
+                    'branch_path', COALESCE(m.name_path, '/')
+                )) as roles_detail
+            FROM users u
+            JOIN user_roles ur ON u.id = ur.user_id
+            JOIN roles r ON ur.role_id = r.id
+            LEFT JOIN merchants m ON ur.scope_id = m.id
+            WHERE u.deleted_at IS NULL
+        `;
+        const params = [];
 
-    const result = await pool.query(query, params);
-    res.json({ success: true, data: result.rows });
+        // 1. Tenant Scoping
+        if (userRole !== "SUPER_ADMIN") {
+            params.push(userTenantId);
+            query += ` AND u.tenant_id = $${params.length}`;
+        }
+
+        // 2. Hierarchical Scoping (V7 Rule)
+        // If I am a Branch Admin, I only see users who have a role AT or BELOW my path.
+        if (userScopePath !== "/") {
+            params.push(userScopePath);
+            query += ` AND (m.name_path LIKE $${params.length} || '%')`;
+        }
+
+        query += ` GROUP BY u.id ORDER BY u.created_at DESC`;
+
+        const result = await pool.query(query, params);
+        res.json({ success: true, count: result.rows.length, data: result.rows });
   } catch (error) {
     res.status(500).json({ success: false, message: "Server error" });
   }
