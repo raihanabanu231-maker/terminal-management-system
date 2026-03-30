@@ -157,11 +157,11 @@ exports.getUsers = async (req, res) => {
             }
         }
 
-        // V7 Hierarchical Scoping Logic
+        // BASE QUERY
         let query = `
             SELECT 
                 u.id, u.email, u.first_name, u.last_name, u.status, u.created_at,
-                json_agg(json_build_object(
+                json_agg(DISTINCT jsonb_build_object(
                     'role', r.name,
                     'scope_type', ur.scope_type,
                     'branch_name', COALESCE(m.name, 'Tenant Wide'),
@@ -175,18 +175,24 @@ exports.getUsers = async (req, res) => {
         `;
         const params = [];
 
-        // 1. Tenant Scoping
+        // 🛡️ 1. SECURITY: Tenant Lockdown
+        // Super Admins see everything. Tenant Admins only see their own company.
         if (userRole !== "SUPER_ADMIN") {
             params.push(userTenantId);
             query += ` AND u.tenant_id = $${params.length}`;
         }
 
-        // 2. Hierarchical Scoping (V7 Rule)
-        // If I am a Branch Admin, I only see users who have a role AT or BELOW my path.
-        // If I am a Root Admin (scopePath is '/'), I see everyone (including NULL path users).
+        // 🛡️ 2. SECURITY: Hierarchical Scoping
+        // Use a sub-selection to ensure if a user has MULTIPLE ROLES, 
+        // we see them if ANY role is within our scope.
         if (userScopePath !== "/") {
             params.push(userScopePath);
-            query += ` AND (m.name_path LIKE $${params.length} || '%')`;
+            query += ` AND EXISTS (
+                SELECT 1 FROM user_roles ur2
+                LEFT JOIN merchants m2 ON ur2.scope_id = m2.id
+                WHERE ur2.user_id = u.id
+                AND (m2.name_path LIKE $${params.length} || '%' OR m2.name_path IS NULL)
+            )`;
         }
 
         query += ` GROUP BY u.id ORDER BY u.created_at DESC`;
