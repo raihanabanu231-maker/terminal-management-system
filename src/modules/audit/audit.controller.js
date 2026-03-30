@@ -89,8 +89,15 @@ exports.getDeviceAuditLogs = async (req, res) => {
         params.push(limit, offset);
 
         const result = await pool.query(query, params);
-        res.json({ success: true, data: result.rows, meta: { limit: parseInt(limit), offset: parseInt(offset), count: result.rows.length } });
-
+        res.json({
+            success: true,
+            data: result.rows,
+            meta: {
+                limit: parseInt(limit),
+                offset: parseInt(offset),
+                count: result.rows.length
+            }
+        });
     } catch (error) {
         console.error("GetDeviceAuditLogs ERROR:", error);
         res.status(500).json({ success: false, message: "Server error" });
