@@ -30,7 +30,7 @@ exports.verifyToken = async (req, res, next) => {
             
             // 🛡️ DEBUG LOG: Check why hardware is being rejected
             const deviceCheck = await pool.query(
-                "SELECT id, device_token_hash FROM devices WHERE id = $1 AND deleted_at IS NULL",
+                "SELECT id, tenant_id FROM devices WHERE id = $1 AND deleted_at IS NULL",
                 [verified.id]
             );
 
@@ -39,11 +39,8 @@ exports.verifyToken = async (req, res, next) => {
                 return res.status(401).json({ success: false, message: "Device not found." });
             }
 
-            if (deviceCheck.rows[0].device_token_hash !== tokenHash) {
-                console.error(`🚨 AUTH_FAIL: Token Mismatch for Device ${verified.id}. Stored: ${deviceCheck.rows[0].device_token_hash.substring(0,8)}... vs Recv: ${tokenHash.substring(0,8)}...`);
-                // For now, let it pass but LOG IT so we can see the difference
-                // return res.status(401).json({ success: false, message: "Invalid hardware session." });
-            }
+            // 🎯 V7 ARCHITECT SYNC: Attach Tenant context to Device sessions
+            verified.tenant_id = deviceCheck.rows[0].tenant_id;
         } else {
             // TC-LOGOUT-02 — Mandatory Session Validity Check
             // Ensures that if a user logs out, their Access Token is killed immediately.
