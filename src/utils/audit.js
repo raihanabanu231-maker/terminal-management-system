@@ -53,29 +53,35 @@ exports.logAudit = async (tenantId, userId, action, resourceType, resourceId, ne
             ]
         );
 
-        // 🎯 V7 ARCHITECT SYNC: Force Mirroring to device_audit_logs
+        // 🎯 V7 ARCHITECT SYNC: Force Mirroring to device_audit_logs (Hardware History)
         if (resourceType === "DEVICE" && finalResourceId !== "00000000-0000-0000-0000-000000000000") {
             try {
-                // Fetch device context for scoping (merchant_id and merchant_path)
-                const devRes = await pool.query("SELECT merchant_id, merchant_path FROM devices WHERE id = $1", [finalResourceId]);
+                // Fetch current device context for scoping
+                const devRes = await pool.query(
+                    "SELECT tenant_id, merchant_id, merchant_path FROM devices WHERE id = $1", 
+                    [finalResourceId]
+                );
+                
                 if (devRes.rows.length > 0) {
-                    const { merchant_id: mId, merchant_path: mPath } = devRes.rows[0];
+                    const { tenant_id: tId, merchant_id: mId, merchant_path: mPath } = devRes.rows[0];
+                    
                     await pool.query(
                         `INSERT INTO device_audit_logs 
                            (device_id, tenant_id, merchant_id, merchant_path, event_type, message, timestamp) 
                          VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
                         [
                             finalResourceId,
-                            finalTenantId,
-                            mId,
+                            tId || finalTenantId,
+                            mId || null,
                             mPath || "/",
-                            action.substring(0, 50), // Truncate action for event_type
-                            `Hardware Action: ${action} | Applied by: ${userId || 'System'}`
+                            String(action).substring(0, 50), 
+                            `Hardware Event: ${action} | User: ${userId || 'SYSTEM'}`
                         ]
                     );
                 }
             } catch (hwError) {
-                console.error("Hardware Mirror Logging Failed:", hwError);
+                console.error("CRITICAL: Hardware Audit Mirroring FAILED:", hwError.message);
+                // Non-blocking failure to avoid crashing the main request
             }
         }
     } catch (error) {
