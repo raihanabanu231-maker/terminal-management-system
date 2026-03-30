@@ -85,8 +85,9 @@ exports.getDeviceAuditLogs = async (req, res) => {
             query += ` AND (dal.merchant_path || '/') ILIKE $${params.length} || '%'`;
         }
 
+        // 3. Final Query Assembly (Fixing Indexing Conflicts)
         query += ` ORDER BY dal.timestamp DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-        params.push(limit, offset);
+        params.push(parseInt(limit), parseInt(offset));
 
         const result = await pool.query(query, params);
         res.json({
