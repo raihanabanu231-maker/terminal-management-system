@@ -191,7 +191,7 @@ exports.getUsers = async (req, res) => {
                 SELECT 1 FROM user_roles ur2
                 LEFT JOIN merchants m2 ON ur2.scope_id = m2.id
                 WHERE ur2.user_id = u.id
-                AND (m2.name_path LIKE $${params.length} || '%' OR m2.name_path IS NULL)
+                AND m2.name_path LIKE $${params.length} || '%'
             )`;
         }
 
