@@ -1,5 +1,5 @@
 const pool = require("../../config/db");
-const crypto = require("crypto");
+const crypto = require("crypto"); // v7.0.2 - Audit Sync Forced Redeploy
 const QRCode = require("qrcode");
 const { logAudit } = require("../../utils/audit");
 
@@ -476,23 +476,39 @@ exports.ackCommand = async (req, res) => {
                  WHERE id = $3`,
                 [execution_time_ms || null, JSON.stringify({ result_data }), commandId]
             );
-            // Fetch the device's tenant ID for correct audit scoping
-            const deviceCheck = await pool.query("SELECT tenant_id FROM devices WHERE id = $1", [deviceId]);
-            const tenantId = deviceCheck.rows[0]?.tenant_id;
+            // Fetch the device's current context (tenant and path) for exact audit mirroring
+            const deviceCheck = await pool.query("SELECT tenant_id, merchant_id, merchant_path FROM devices WHERE id = $1", [deviceId]);
+            const { tenant_id: tenantId, merchant_id: merchantId, merchant_path: merchantPath } = deviceCheck.rows[0] || {};
             
             let auditAction = `COMMAND_${cmd.type}_SUCCESS`;
+            let deviceLogEvent = cmd.type; // e.g. TOGGLE_BLUETOOTH
+            let deviceLogMessage = `Command ${cmd.type} completed successfully.`;
+
             if (cmd.type === "TOGGLE_BLUETOOTH" || cmd.type === "TOGGLE_WIFI") {
                 const state = cmd.payload?.state ? String(cmd.payload.state).toUpperCase() : "SUCCESS";
                 auditAction = `DEVICE_${cmd.type.substring(7)}_${state}_SUCCESS`;
+                deviceLogEvent = `${cmd.type.substring(7)}_${state}`; // e.g. BLUETOOTH_ON
+                deviceLogMessage = `${cmd.type.substring(7)} command executed: State changed to ${state}.`;
             } else if (cmd.type === "REBOOT" || cmd.type === "WIPE") {
                 auditAction = `DEVICE_${cmd.type}_SUCCESS`;
+                deviceLogEvent = `${cmd.type}_SUCCESS`;
             }
 
+            // 1. Log to System Audit (Web Dashboard)
             await logAudit(tenantId || null, null, auditAction, "DEVICE", deviceId, { 
                 command_id: commandId, 
                 execution_time_ms,
                 type: cmd.type 
             });
+
+            // 2. 🎯 AUTOMATIC DEVICE LOG MIRROR (V7 ARCHITECT SPEC)
+            // Mirrors the command success into the hardware-specific audit history table
+            await pool.query(
+                `INSERT INTO device_audit_logs 
+                 (device_id, tenant_id, merchant_id, merchant_path, event_type, message, timestamp) 
+                 VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+                [deviceId, tenantId, merchantId || null, merchantPath || '/', deviceLogEvent, deviceLogMessage]
+            );
         } else {
             if (cmd.retry_count < cmd.max_retries) {
                 // ... (Retry logic, no change needed here)
