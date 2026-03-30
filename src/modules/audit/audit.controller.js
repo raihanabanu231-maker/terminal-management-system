@@ -79,9 +79,10 @@ exports.getDeviceAuditLogs = async (req, res) => {
             params.push(device_id);
             query += ` AND dal.device_id = $${params.length}`;
         }
-        if (merchant_id) {
-            params.push(merchant_id);
-            query += ` AND dal.merchant_id = $${params.length}`;
+        // 🛡️ 1. SECURITY: Hierarchical Scoping
+        if (userScopePath !== "/") {
+            params.push(userScopePath);
+            query += ` AND (dal.merchant_path || '/') ILIKE $${params.length} || '%'`;
         }
 
         query += ` ORDER BY dal.timestamp DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
