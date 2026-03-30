@@ -14,51 +14,56 @@ const normalizePath = (path) => {
 // --- V7 HELPER: Get User Scope ---
 const getUserScope = (req) => {
     const roles = req.user.roles || [];
-    // Super Admin has root access
     if (req.user.role === "SUPER_ADMIN") return "/";
     
-    // Find the broadest merchant scope or default to tenant root
     const merchantRoles = roles.filter(r => r.scope === "merchant");
     if (merchantRoles.length > 0) {
-        // Typically one user has one main branch scope in this architecture
         return normalizePath(merchantRoles[0].scope_path);
     }
-    return "/"; // Tenant Admin
+    return "/"; // Tenant Admin Scope
 };
 
-// 1. Create Group (V7 Spec - MERCHANT ID MANDATORY)
+// 1. Create Group (Hybrid: Merchant-based or Tenant-wide)
 exports.createGroup = async (req, res) => {
-    const { name, description, merchant_id } = req.body;
+    const { name, merchant_id } = req.body;
     const { tenant_id, id: userId, role } = req.user;
     const userScope = getUserScope(req);
 
-    if (!name || !merchant_id) {
-        return res.status(400).json({ success: false, message: "Group name and merchant_id are required" });
+    if (!name) {
+        return res.status(400).json({ success: false, message: "Group name is required" });
     }
 
     try {
-        // Fetch target merchant path for normalization & validation
-        const merchRes = await pool.query("SELECT tenant_id, name_path FROM merchants WHERE id = $1", [merchant_id]);
-        if (merchRes.rows.length === 0) {
-            return res.status(404).json({ success: false, message: "Merchant not found" });
-        }
+        let targetMerchantPath = "/";
+        let finalMerchantId = merchant_id;
 
-        if (merchRes.rows[0].tenant_id !== tenant_id && role !== "SUPER_ADMIN") {
-            return res.status(403).json({ success: false, message: "Forbidden: Tenant mismatch" });
-        }
+        if (merchant_id) {
+            const merchRes = await pool.query("SELECT tenant_id, name_path FROM merchants WHERE id = $1", [merchant_id]);
+            if (merchRes.rows.length === 0) {
+                return res.status(404).json({ success: false, message: "Merchant not found" });
+            }
 
-        const targetMerchantPath = normalizePath(merchRes.rows[0].name_path);
+            if (merchRes.rows[0].tenant_id !== tenant_id && role !== "SUPER_ADMIN") {
+                return res.status(403).json({ success: false, message: "Forbidden: Tenant mismatch" });
+            }
+
+            targetMerchantPath = normalizePath(merchRes.rows[0].name_path);
+        } else {
+            // Support Tenant-wide groups: Default path to root "/" and ID to null
+            targetMerchantPath = "/";
+            finalMerchantId = null;
+        }
 
         // 🛡️ SECURITY: Prefix-based validation
         if (!targetMerchantPath.startsWith(userScope)) {
-            return res.status(403).json({ success: false, message: "Unauthorized: Branch outside of your scope" });
+            return res.status(403).json({ success: false, message: "Unauthorized: Target branch is outside of your scope" });
         }
 
         const result = await pool.query(
-            `INSERT INTO device_groups (tenant_id, merchant_id, merchant_path, name, description)
-             VALUES ($1, $2, $3, $4, $5)
+            `INSERT INTO device_groups (tenant_id, merchant_id, merchant_path, name)
+             VALUES ($1, $2, $3, $4)
              RETURNING *`,
-            [tenant_id, merchant_id, targetMerchantPath, name, description]
+            [tenant_id, finalMerchantId, targetMerchantPath, name]
         );
 
         const newGroup = result.rows[0];
@@ -68,28 +73,27 @@ exports.createGroup = async (req, res) => {
 
     } catch (error) {
         if (error.code === "23505") {
-            return res.status(400).json({ success: false, message: "A group with this name already exists in this branch." });
+            return res.status(400).json({ success: false, message: "A group with this name already exists in this branch/tenant." });
         }
         console.error("CREATE_GROUP_ERROR:", error);
         res.status(500).json({ success: false, message: "Server error" });
     }
 };
 
-// 2. List Groups
+// 2. List Groups (Hybrid Results)
 exports.getGroups = async (req, res) => {
     const { tenant_id } = req.user;
     const userScope = getUserScope(req);
 
     try {
-        // Fetch groups where merchant_path starts with userScope
         const query = `
             SELECT dg.*, 
                    (SELECT COUNT(*) FROM device_group_members WHERE group_id = dg.id) as device_count,
                    t.name as tenant_name,
-                   m.name as merchant_name
+                   COALESCE(m.name, 'Tenant-Wide') as merchant_name
             FROM device_groups dg
             JOIN tenants t ON dg.tenant_id = t.id
-            JOIN merchants m ON dg.merchant_id = m.id
+            LEFT JOIN merchants m ON dg.merchant_id = m.id
             WHERE dg.tenant_id = $1 
             AND dg.merchant_path LIKE $2 || '%'
             AND dg.deleted_at IS NULL
@@ -113,10 +117,10 @@ exports.getGroupById = async (req, res) => {
 
     try {
         const groupRes = await pool.query(
-            `SELECT dg.*, t.name as tenant_name, m.name as merchant_name
+            `SELECT dg.*, t.name as tenant_name, COALESCE(m.name, 'Tenant-Wide') as merchant_name
              FROM device_groups dg
              JOIN tenants t ON dg.tenant_id = t.id
-             JOIN merchants m ON dg.merchant_id = m.id
+             LEFT JOIN merchants m ON dg.merchant_id = m.id
              WHERE dg.id = $1 AND dg.deleted_at IS NULL`,
             [id]
         );
@@ -127,7 +131,6 @@ exports.getGroupById = async (req, res) => {
 
         const group = groupRes.rows[0];
 
-        // 🛡️ SECURITY check
         if (group.tenant_id !== tenant_id) return res.status(403).json({ success: false, message: "Forbidden" });
         if (!group.merchant_path.startsWith(userScope)) return res.status(403).json({ success: false, message: "Unauthorized" });
 
@@ -156,7 +159,7 @@ exports.getGroupById = async (req, res) => {
 // 4. Update Group
 exports.updateGroup = async (req, res) => {
     const { id } = req.params;
-    const { name, description } = req.body;
+    const { name } = req.body;
     const { tenant_id, id: userId } = req.user;
     const userScope = getUserScope(req);
 
@@ -171,11 +174,10 @@ exports.updateGroup = async (req, res) => {
         const result = await pool.query(
             `UPDATE device_groups 
              SET name = COALESCE($1, name), 
-                 description = COALESCE($2, description),
                  updated_at = NOW()
-             WHERE id = $3
+             WHERE id = $2
              RETURNING *`,
-            [name, description, id]
+            [name, id]
         );
 
         await logAudit(tenant_id, userId, "GROUP_UPDATED", "DEVICE_GROUP", id, { name });
@@ -202,18 +204,18 @@ exports.addMemberToGroup = async (req, res) => {
         if (groupRes.rows.length === 0) return res.status(404).json({ success: false, message: "Group not found" });
 
         const group = groupRes.rows[0];
-        if (group.tenant_id !== tenant_id) return res.status(403).json({ success: false, message: "Forbidden: Tenant mismatch" });
+        if (group.tenant_id !== tenant_id) return res.status(403).json({ success: false, message: "Forbidden" });
         if (!group.merchant_path.startsWith(userScope)) return res.status(403).json({ success: false, message: "Unauthorized" });
 
-        // Fetch device and validate hierarchy
         const deviceRes = await pool.query("SELECT id, tenant_id, merchant_path FROM devices WHERE id = $1", [deviceId]);
         if (deviceRes.rows.length === 0) return res.status(404).json({ success: false, message: "Device not found" });
 
         const device = deviceRes.rows[0];
         const normalizedDevicePath = normalizePath(device.merchant_path);
 
-        // 🛡️ VIOLATION 3.3: Hierarchy and Tenant Isolation
         if (device.tenant_id !== tenant_id) return res.status(403).json({ success: false, message: "Forbidden" });
+        
+        // Check hierarchy: Device must be under group's branch or tenant root (if group is global)
         if (!normalizedDevicePath.startsWith(group.merchant_path)) {
             return res.status(400).json({ 
                 success: false, 
@@ -221,7 +223,6 @@ exports.addMemberToGroup = async (req, res) => {
             });
         }
 
-        // Insertion using ON CONFLICT to avoid duplicate error as per 3.3
         await pool.query(
             `INSERT INTO device_group_members (group_id, device_id) 
              VALUES ($1, $2)
@@ -285,7 +286,7 @@ exports.deleteGroup = async (req, res) => {
     }
 };
 
-// 8. Execute Group Commands (Batch Execution per V2 Goal)
+// 8. Execute Group Commands
 exports.executeGroupCommand = async (req, res) => {
     const { id } = req.params;
     const { type, payload } = req.body;
@@ -300,7 +301,6 @@ exports.executeGroupCommand = async (req, res) => {
         if (group.tenant_id !== tenant_id) return res.status(403).json({ success: false, message: "Forbidden" });
         if (!group.merchant_path.startsWith(userScope)) return res.status(403).json({ success: false, message: "Unauthorized" });
 
-        // Fetch all devices
         const membersRes = await pool.query("SELECT device_id FROM device_group_members WHERE group_id = $1", [id]);
         const deviceIds = membersRes.rows.map(r => r.device_id);
 
@@ -335,10 +335,10 @@ exports.executeGroupCommand = async (req, res) => {
     }
 };
 
-// 9. Sync Members (Bulk Overwrite)
+// 9. Sync Members
 exports.syncGroupMembers = async (req, res) => {
     const { id } = req.params;
-    const { deviceIds } = req.body; // Array of UUIDs
+    const { deviceIds } = req.body; 
     const { tenant_id } = req.user;
     const userScope = getUserScope(req);
 
@@ -364,17 +364,14 @@ exports.syncGroupMembers = async (req, res) => {
             return res.status(403).json({ success: false, message: "Unauthorized" });
         }
 
-        // 1. Clear existing
         await client.query("DELETE FROM device_group_members WHERE group_id = $1", [id]);
 
-        // 2. Validate and Insert new members
         for (const devId of deviceIds) {
             const devRes = await client.query("SELECT id, tenant_id, merchant_path FROM devices WHERE id = $1", [devId]);
             if (devRes.rows.length > 0) {
                 const device = devRes.rows[0];
                 const normalizedDevicePath = normalizePath(device.merchant_path);
                 
-                // Only add if it's in the same tenant and descendant of the group's branch
                 if (device.tenant_id === tenant_id && normalizedDevicePath.startsWith(group.merchant_path)) {
                     await client.query(
                         "INSERT INTO device_group_members (group_id, device_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
