@@ -29,8 +29,8 @@ exports.createGroup = async (req, res) => {
     const { tenant_id, id: userId, role } = req.user;
     const userScope = getUserScope(req);
 
-    // 🎯 FIX: Sanitize merchant_id for Postman (handle "null", "", etc)
-    if (merchant_id === "null" || merchant_id === "undefined" || merchant_id === "") {
+    // 🎯 FIX: Smart Scoping (handle "null", empty, or tenant_id as a global mark)
+    if (merchant_id === "null" || merchant_id === "" || merchant_id === tenant_id) {
         merchant_id = null;
     }
 
@@ -45,7 +45,7 @@ exports.createGroup = async (req, res) => {
         if (merchant_id) {
             const merchRes = await pool.query("SELECT tenant_id, name_path FROM merchants WHERE id = $1", [merchant_id]);
             if (merchRes.rows.length === 0) {
-                return res.status(404).json({ success: false, message: "Merchant not found. If you want a Tenant group, leave merchant_id empty." });
+                return res.status(404).json({ success: false, message: "Merchant not found. To create a Tenant-level group, use your Tenant ID." });
             }
 
             if (merchRes.rows[0].tenant_id !== tenant_id && role !== "SUPER_ADMIN") {
@@ -55,11 +55,15 @@ exports.createGroup = async (req, res) => {
             targetMerchantPath = normalizePath(merchRes.rows[0].name_path);
         } else {
             // Support Tenant-wide groups: Default path to root "/" and ID to null
+            // 🛡️ SECURITY: Only Tenant Admins can create root groups
+            if (userScope !== "/") {
+                return res.status(403).json({ success: false, message: "Unauthorized: Only Tenant Admins can create Global/Tenant-wide groups." });
+            }
             targetMerchantPath = "/";
             finalMerchantId = null;
         }
 
-        // 🛡️ SECURITY: Prefix-based validation (User must have permission for this path)
+        // 🛡️ SECURITY: Prefix-based validation
         if (!targetMerchantPath.startsWith(userScope)) {
             return res.status(403).json({ success: false, message: "Unauthorized: You don't have permission to create a group in this scope." });
         }
@@ -85,13 +89,13 @@ exports.createGroup = async (req, res) => {
     }
 };
 
-// 2. List Groups (Hybrid Results)
+// 2. List Groups (Hybrid Results with Strict Isolation)
 exports.getGroups = async (req, res) => {
     const { tenant_id } = req.user;
     const userScope = getUserScope(req);
 
     try {
-        const query = `
+        let query = `
             SELECT dg.*, 
                    (SELECT COUNT(*) FROM device_group_members WHERE group_id = dg.id) as device_count,
                    t.name as tenant_name,
@@ -100,12 +104,22 @@ exports.getGroups = async (req, res) => {
             JOIN tenants t ON dg.tenant_id = t.id
             LEFT JOIN merchants m ON dg.merchant_id = m.id
             WHERE dg.tenant_id = $1 
-            AND dg.merchant_path LIKE $2 || '%'
             AND dg.deleted_at IS NULL
-            ORDER BY dg.created_at DESC
         `;
+        const params = [tenant_id];
+
+        // 🔒 STRICT ISOLATION LOGIC:
+        // Case 1: Tenant Admin (userScope = '/') -> Sees EVERY group in the tenant.
+        // Case 2: Merchant Admin (userScope = '/branch/') -> ONLY sees groups AT or BELOW their branch.
+        // Note: A group with merchant_path = '/' will NOT be shown to a merchant admin.
+        if (userScope !== "/") {
+            params.push(userScope);
+            query += ` AND dg.merchant_path LIKE $${params.length} || '%'`;
+        }
         
-        const result = await pool.query(query, [tenant_id, userScope]);
+        query += ` ORDER BY dg.created_at DESC`;
+        
+        const result = await pool.query(query, params);
         res.json({ success: true, total: result.rows.length, data: result.rows });
 
     } catch (error) {
@@ -114,7 +128,7 @@ exports.getGroups = async (req, res) => {
     }
 };
 
-// 3. View Details
+// 3. View Details (with Strict Authorization)
 exports.getGroupById = async (req, res) => {
     const { id } = req.params;
     const { tenant_id } = req.user;
@@ -137,7 +151,13 @@ exports.getGroupById = async (req, res) => {
         const group = groupRes.rows[0];
 
         if (group.tenant_id !== tenant_id) return res.status(403).json({ success: false, message: "Forbidden" });
-        if (!group.merchant_path.startsWith(userScope)) return res.status(403).json({ success: false, message: "Unauthorized" });
+
+        // 🔒 STRICT ISOLATION:
+        // A branch manager can only view a group if the group path is at or below the manager's scope.
+        // A Global Tenant Group (path '/') is NOT accessible to a branch manager (scope '/branch/').
+        if (!group.merchant_path.startsWith(userScope)) {
+            return res.status(403).json({ success: false, message: "Unauthorized: Access to Global/Tenant groups is restricted to Tenant Admins." });
+        }
 
         const membersRes = await pool.query(
             `SELECT d.id, d.serial, d.model, d.device_status, d.last_seen, d.merchant_path
@@ -174,7 +194,11 @@ exports.updateGroup = async (req, res) => {
 
         const group = groupRes.rows[0];
         if (group.tenant_id !== tenant_id) return res.status(403).json({ success: false, message: "Forbidden" });
-        if (!group.merchant_path.startsWith(userScope)) return res.status(403).json({ success: false, message: "Unauthorized" });
+        
+        // 🔒 STRICT ISOLATION
+        if (!group.merchant_path.startsWith(userScope)) {
+            return res.status(403).json({ success: false, message: "Unauthorized: Global groups can only be modified by Tenant Admins." });
+        }
 
         const result = await pool.query(
             `UPDATE device_groups 
@@ -195,7 +219,7 @@ exports.updateGroup = async (req, res) => {
     }
 };
 
-// 5. Add Member (Strict Security Logic)
+// 5. Add Member
 exports.addMemberToGroup = async (req, res) => {
     const { id } = req.params;
     const { deviceId } = req.body;
@@ -210,7 +234,11 @@ exports.addMemberToGroup = async (req, res) => {
 
         const group = groupRes.rows[0];
         if (group.tenant_id !== tenant_id) return res.status(403).json({ success: false, message: "Forbidden" });
-        if (!group.merchant_path.startsWith(userScope)) return res.status(403).json({ success: false, message: "Unauthorized" });
+        
+        // 🔒 STRICT ISOLATION
+        if (!group.merchant_path.startsWith(userScope)) {
+            return res.status(403).json({ success: false, message: "Unauthorized" });
+        }
 
         const deviceRes = await pool.query("SELECT id, tenant_id, merchant_path FROM devices WHERE id = $1", [deviceId]);
         if (deviceRes.rows.length === 0) return res.status(404).json({ success: false, message: "Device not found" });
@@ -219,17 +247,13 @@ exports.addMemberToGroup = async (req, res) => {
         const normalizedDevicePath = normalizePath(device.merchant_path);
         const normalizedGroupPath = normalizePath(group.merchant_path);
 
-        if (device.tenant_id !== tenant_id) return res.status(403).json({ success: false, message: "Forbidden: Device belongs to another company" });
+        if (device.tenant_id !== tenant_id) return res.status(403).json({ success: false, message: "Forbidden" });
         
-        // 🔒 STRICT SECURITY HIERARCHY:
-        // Rule: A Device can only be in a group if its path is AT or BELOW the group path.
-        // Example 1: Group is '/nyc/', Device is '/nyc/register1' (OK)
-        // Example 2: Group is '/nyc/', Device is '/' (FAIL - Tenant devices cannot be 'stolen' by branch groups)
-        // Example 3: Group is '/', Device is '/nyc/' (OK - Global groups can contain all devices)
+        // Check hierarchy
         if (!normalizedDevicePath.startsWith(normalizedGroupPath)) {
             return res.status(403).json({ 
                 success: false, 
-                message: `Security Violation: This device (${normalizedDevicePath}) is located above or outside of this group's scope (${normalizedGroupPath}). Groups can only manage devices they specifically own.` 
+                message: "Security Violation: This device is located outside of this group's branch scope." 
             });
         }
 
