@@ -55,37 +55,46 @@ exports.getAuditLogs = async (req, res) => {
  * 2. Retrieve Device Audit Logs (Android Generated)
  * GET /api/v1/audit/devices
  */
+// 4. View Device Event Logs (Hardware - Dashboard)
 exports.getDeviceAuditLogs = async (req, res) => {
     try {
-        const { device_id, merchant_id, limit = 50, offset = 0 } = req.query;
-        const { role: userRole, tenant_id: tenantId } = req.user;
+        const { role: userRole, tenant_id: userTenantId } = req.user;
+        const { limit = 50, offset = 0, device_id } = req.query;
+
+        // 🎯 V7 HELPER: Get User Scope Path
+        const roles = req.user.roles || [];
+        let userScopePath = "/";
+        if (userRole !== "SUPER_ADMIN") {
+            const merchantRoles = roles.filter(r => r.scope === "merchant");
+            if (merchantRoles.length > 0) userScopePath = merchantRoles[0].scope_path;
+        }
 
         let query = `
-            SELECT dal.*, d.serial, t.name as tenant_name, m.name as merchant_name
+            SELECT dal.*, d.serial 
             FROM device_audit_logs dal
-            JOIN devices d ON dal.device_id = d.id
-            JOIN tenants t ON dal.tenant_id = t.id
-            LEFT JOIN merchants m ON dal.merchant_id = m.id
+            LEFT JOIN devices d ON dal.device_id = d.id
             WHERE 1=1
         `;
         const params = [];
 
+        // 🛡️ 1. SECURITY: Tenant Lockdown
         if (userRole !== "SUPER_ADMIN") {
-            params.push(tenantId);
+            params.push(userTenantId);
             query += ` AND dal.tenant_id = $${params.length}`;
+        }
+
+        // 🛡️ 2. SECURITY: Hierarchical Scoping
+        if (userScopePath !== "/") {
+            params.push(userScopePath);
+            query += ` AND (dal.merchant_path || '/') ILIKE $${params.length} || '%'`;
         }
 
         if (device_id) {
             params.push(device_id);
             query += ` AND dal.device_id = $${params.length}`;
         }
-        // 🛡️ 1. SECURITY: Hierarchical Scoping
-        if (userScopePath !== "/") {
-            params.push(userScopePath);
-            query += ` AND (dal.merchant_path || '/') ILIKE $${params.length} || '%'`;
-        }
 
-        // 3. Final Query Assembly (Fixing Indexing Conflicts)
+        // 3. Final Query Assembly (Fixing Indexing Conflicts Definitively)
         query += ` ORDER BY dal.timestamp DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
         params.push(parseInt(limit), parseInt(offset));
 
