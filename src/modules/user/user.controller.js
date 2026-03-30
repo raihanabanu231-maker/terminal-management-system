@@ -187,12 +187,17 @@ exports.getUsers = async (req, res) => {
         // we see them if ANY role is within our scope.
         if (userScopePath !== "/") {
             params.push(userScopePath);
-            query += ` AND EXISTS (
+            const currentUserId = req.user.id;
+            params.push(currentUserId);
+            
+            // We use ILIKE for case-insensitive matching and append '/' 
+            // to the DB path to ensure it safely matches the JWT scope trailing slash.
+            query += ` AND (u.id = $${params.length} OR EXISTS (
                 SELECT 1 FROM user_roles ur2
                 LEFT JOIN merchants m2 ON ur2.scope_id = m2.id
                 WHERE ur2.user_id = u.id
-                AND m2.name_path LIKE $${params.length} || '%'
-            )`;
+                AND (m2.name_path || '/') ILIKE $${params.length - 1} || '%'
+            ))`;
         }
 
         query += ` GROUP BY u.id ORDER BY u.created_at DESC`;
