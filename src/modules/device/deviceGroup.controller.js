@@ -25,9 +25,14 @@ const getUserScope = (req) => {
 
 // 1. Create Group (Hybrid: Merchant-based or Tenant-wide)
 exports.createGroup = async (req, res) => {
-    const { name, merchant_id } = req.body;
+    let { name, merchant_id } = req.body;
     const { tenant_id, id: userId, role } = req.user;
     const userScope = getUserScope(req);
+
+    // 🎯 FIX: Sanitize merchant_id for Postman (handle "null", "", etc)
+    if (merchant_id === "null" || merchant_id === "undefined" || merchant_id === "") {
+        merchant_id = null;
+    }
 
     if (!name) {
         return res.status(400).json({ success: false, message: "Group name is required" });
@@ -40,7 +45,7 @@ exports.createGroup = async (req, res) => {
         if (merchant_id) {
             const merchRes = await pool.query("SELECT tenant_id, name_path FROM merchants WHERE id = $1", [merchant_id]);
             if (merchRes.rows.length === 0) {
-                return res.status(404).json({ success: false, message: "Merchant not found" });
+                return res.status(404).json({ success: false, message: "Merchant not found. If you want a Tenant group, leave merchant_id empty." });
             }
 
             if (merchRes.rows[0].tenant_id !== tenant_id && role !== "SUPER_ADMIN") {
@@ -54,9 +59,9 @@ exports.createGroup = async (req, res) => {
             finalMerchantId = null;
         }
 
-        // 🛡️ SECURITY: Prefix-based validation
+        // 🛡️ SECURITY: Prefix-based validation (User must have permission for this path)
         if (!targetMerchantPath.startsWith(userScope)) {
-            return res.status(403).json({ success: false, message: "Unauthorized: Target branch is outside of your scope" });
+            return res.status(403).json({ success: false, message: "Unauthorized: You don't have permission to create a group in this scope." });
         }
 
         const result = await pool.query(
@@ -190,7 +195,7 @@ exports.updateGroup = async (req, res) => {
     }
 };
 
-// 5. Add Member
+// 5. Add Member (Strict Security Logic)
 exports.addMemberToGroup = async (req, res) => {
     const { id } = req.params;
     const { deviceId } = req.body;
@@ -212,14 +217,19 @@ exports.addMemberToGroup = async (req, res) => {
 
         const device = deviceRes.rows[0];
         const normalizedDevicePath = normalizePath(device.merchant_path);
+        const normalizedGroupPath = normalizePath(group.merchant_path);
 
-        if (device.tenant_id !== tenant_id) return res.status(403).json({ success: false, message: "Forbidden" });
+        if (device.tenant_id !== tenant_id) return res.status(403).json({ success: false, message: "Forbidden: Device belongs to another company" });
         
-        // Check hierarchy: Device must be under group's branch or tenant root (if group is global)
-        if (!normalizedDevicePath.startsWith(group.merchant_path)) {
-            return res.status(400).json({ 
+        // 🔒 STRICT SECURITY HIERARCHY:
+        // Rule: A Device can only be in a group if its path is AT or BELOW the group path.
+        // Example 1: Group is '/nyc/', Device is '/nyc/register1' (OK)
+        // Example 2: Group is '/nyc/', Device is '/' (FAIL - Tenant devices cannot be 'stolen' by branch groups)
+        // Example 3: Group is '/', Device is '/nyc/' (OK - Global groups can contain all devices)
+        if (!normalizedDevicePath.startsWith(normalizedGroupPath)) {
+            return res.status(403).json({ 
                 success: false, 
-                message: "Invalid device scope: Device must belong to the same branch or a sub-branch of the group anchor." 
+                message: `Security Violation: This device (${normalizedDevicePath}) is located above or outside of this group's scope (${normalizedGroupPath}). Groups can only manage devices they specifically own.` 
             });
         }
 
@@ -335,7 +345,7 @@ exports.executeGroupCommand = async (req, res) => {
     }
 };
 
-// 9. Sync Members
+// 9. Sync Members (Strict Scope Enforcement)
 exports.syncGroupMembers = async (req, res) => {
     const { id } = req.params;
     const { deviceIds } = req.body; 
@@ -355,11 +365,13 @@ exports.syncGroupMembers = async (req, res) => {
         }
 
         const group = groupRes.rows[0];
+        const normalizedGroupPath = normalizePath(group.merchant_path);
+
         if (group.tenant_id !== tenant_id) {
             await client.query("ROLLBACK");
             return res.status(403).json({ success: false, message: "Forbidden" });
         }
-        if (!group.merchant_path.startsWith(userScope)) {
+        if (!normalizedGroupPath.startsWith(userScope)) {
             await client.query("ROLLBACK");
             return res.status(403).json({ success: false, message: "Unauthorized" });
         }
@@ -372,7 +384,8 @@ exports.syncGroupMembers = async (req, res) => {
                 const device = devRes.rows[0];
                 const normalizedDevicePath = normalizePath(device.merchant_path);
                 
-                if (device.tenant_id === tenant_id && normalizedDevicePath.startsWith(group.merchant_path)) {
+                // 🔒 STRICT SECURITY HIERARCHY
+                if (device.tenant_id === tenant_id && normalizedDevicePath.startsWith(normalizedGroupPath)) {
                     await client.query(
                         "INSERT INTO device_group_members (group_id, device_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
                         [id, devId]
