@@ -374,7 +374,7 @@ exports.syncGroupMembers = async (req, res) => {
     try {
         await client.query("BEGIN");
 
-        const groupRes = await client.query("SELECT tenant_id, merchant_path FROM device_groups WHERE id = $1 AND deleted_at IS NULL", [id]);
+        const groupRes = await client.query("SELECT tenant_id, merchant_id, merchant_path FROM device_groups WHERE id = $1 AND deleted_at IS NULL", [id]);
         if (groupRes.rows.length === 0) {
             await client.query("ROLLBACK");
             return res.status(404).json({ success: false, message: "Group not found" });
