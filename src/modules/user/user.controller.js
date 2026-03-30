@@ -157,8 +157,7 @@ exports.getUsers = async (req, res) => {
             }
         }
 
-        // We use a Subquery/Join to only show users who have at least one role 
-        // that falls within our hierarchical scope.
+        // V7 Hierarchical Scoping Logic
         let query = `
             SELECT 
                 u.id, u.email, u.first_name, u.last_name, u.status, u.created_at,
@@ -169,8 +168,8 @@ exports.getUsers = async (req, res) => {
                     'branch_path', COALESCE(m.name_path, '/')
                 )) as roles_detail
             FROM users u
-            JOIN user_roles ur ON u.id = ur.user_id
-            JOIN roles r ON ur.role_id = r.id
+            LEFT JOIN user_roles ur ON u.id = ur.user_id
+            LEFT JOIN roles r ON ur.role_id = r.id
             LEFT JOIN merchants m ON ur.scope_id = m.id
             WHERE u.deleted_at IS NULL
         `;
@@ -184,6 +183,7 @@ exports.getUsers = async (req, res) => {
 
         // 2. Hierarchical Scoping (V7 Rule)
         // If I am a Branch Admin, I only see users who have a role AT or BELOW my path.
+        // If I am a Root Admin (scopePath is '/'), I see everyone (including NULL path users).
         if (userScopePath !== "/") {
             params.push(userScopePath);
             query += ` AND (m.name_path LIKE $${params.length} || '%')`;
