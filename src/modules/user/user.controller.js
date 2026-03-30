@@ -157,10 +157,12 @@ exports.getUsers = async (req, res) => {
             }
         }
 
-        // BASE QUERY
+        // BASE QUERY (Restoring Frontend Fields: mobile, tenant_name, roles)
         let query = `
             SELECT 
-                u.id, u.email, u.first_name, u.last_name, u.status, u.created_at,
+                u.id, u.email, u.first_name, u.last_name, u.mobile, u.status, u.created_at,
+                t.name as tenant_name,
+                array_agg(DISTINCT r.name) as roles,
                 json_agg(DISTINCT jsonb_build_object(
                     'role', r.name,
                     'scope_type', ur.scope_type,
@@ -168,6 +170,7 @@ exports.getUsers = async (req, res) => {
                     'branch_path', COALESCE(m.name_path, '/')
                 )) as roles_detail
             FROM users u
+            LEFT JOIN tenants t ON u.tenant_id = t.id
             LEFT JOIN user_roles ur ON u.id = ur.user_id
             LEFT JOIN roles r ON ur.role_id = r.id
             LEFT JOIN merchants m ON ur.scope_id = m.id
@@ -200,7 +203,7 @@ exports.getUsers = async (req, res) => {
             ))`;
         }
 
-        query += ` GROUP BY u.id ORDER BY u.created_at DESC`;
+        query += ` GROUP BY u.id, t.name ORDER BY u.created_at DESC`;
 
         const result = await pool.query(query, params);
         res.json({ success: true, count: result.rows.length, data: result.rows });
