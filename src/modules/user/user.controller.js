@@ -9,41 +9,41 @@ const SYSTEM_TENANT_ID = 'f8261f95-d148-4c77-9e80-d254129a8843';
 
 // 1. Get Roles (For Dropdowns)
 exports.getRoles = async (req, res) => {
-    try {
-        let query = "SELECT id, name, permissions FROM roles WHERE deleted_at IS NULL AND (tenant_id IS NULL";
-        const params = [];
+  try {
+    let query = "SELECT id, name, permissions FROM roles WHERE deleted_at IS NULL AND (tenant_id IS NULL";
+    const params = [];
 
-        if (req.user.role !== "SUPER_ADMIN") {
-            params.push(req.user.tenant_id);
-            query += " OR tenant_id = $1";
-        } else {
-            query += " OR 1=1";
-        }
-        query += ") ORDER BY name ASC";
-
-        const result = await pool.query(query, params);
-        res.json({ success: true, data: result.rows });
-    } catch (error) {
-        res.status(500).json({ success: false, message: "Server error" });
+    if (req.user.role !== "SUPER_ADMIN") {
+      params.push(req.user.tenant_id);
+      query += " OR tenant_id = $1";
+    } else {
+      query += " OR 1=1";
     }
+    query += ") ORDER BY name ASC";
+
+    const result = await pool.query(query, params);
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server error" });
+  }
 };
 
 // 2. Create Custom Role
 exports.createRole = async (req, res) => {
-    const { name, permissions, tenant_id } = req.body;
-    const finalTenantId = (req.user.role === "SUPER_ADMIN" && tenant_id) ? tenant_id : req.user.tenant_id;
+  const { name, permissions, tenant_id } = req.body;
+  const finalTenantId = (req.user.role === "SUPER_ADMIN" && tenant_id) ? tenant_id : req.user.tenant_id;
 
-    if (!name || !permissions) return res.status(400).json({ message: "Name and permissions (array) are required" });
+  if (!name || !permissions) return res.status(400).json({ message: "Name and permissions (array) are required" });
 
-    try {
-        const result = await pool.query(
-            "INSERT INTO roles (tenant_id, name, permissions) VALUES ($1, $2, $3) RETURNING *",
-            [finalTenantId, name, permissions]
-        );
-        res.status(201).json({ success: true, data: result.rows[0] });
-    } catch (error) {
-        res.status(500).json({ success: false, message: "Server error" });
-    }
+  try {
+    const result = await pool.query(
+      "INSERT INTO roles (tenant_id, name, permissions) VALUES ($1, $2, $3) RETURNING *",
+      [finalTenantId, name, permissions]
+    );
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server error" });
+  }
 };
 
 // --- USER & INVITATION ENGINE ---
@@ -59,20 +59,20 @@ exports.inviteUser = async (req, res) => {
 
     // --- SANITIZE MERCHANT_ID (Standard across all features) ---
     if (merchant_id === "null" || merchant_id === "undefined" || merchant_id === "" || merchant_id === finalTenantId) {
-        merchant_id = null;
+      merchant_id = null;
     }
 
     // --- SMART ROLE RESOLUTION (Matches Frontend 'tenant admin' to 'TENANT_ADMIN') ---
     if (!role_id && role_name) {
-        // Automatically translate spaces to underscores and make UPPERCASE (e.g. 'tenant admin' -> 'TENANT_ADMIN')
-        const lookupName = role_name.trim().replace(/\s+/g, '_').toUpperCase();
+      // Automatically translate spaces to underscores and make UPPERCASE (e.g. 'tenant admin' -> 'TENANT_ADMIN')
+      const lookupName = role_name.trim().replace(/\s+/g, '_').toUpperCase();
 
-        const roleLookup = await pool.query(
-            "SELECT id FROM roles WHERE (name = $1 OR name ILIKE $1) AND (tenant_id = $2 OR tenant_id IS NULL)",
-            [lookupName, finalTenantId]
-        );
-        if (roleLookup.rows.length === 0) return res.status(404).json({ success: false, message: `Role '${role_name}' / '${lookupName}' not found.` });
-        role_id = roleLookup.rows[0].id;
+      const roleLookup = await pool.query(
+        "SELECT id FROM roles WHERE (name = $1 OR name ILIKE $1) AND (tenant_id = $2 OR tenant_id IS NULL)",
+        [lookupName, finalTenantId]
+      );
+      if (roleLookup.rows.length === 0) return res.status(404).json({ success: false, message: `Role '${role_name}' / '${lookupName}' not found.` });
+      role_id = roleLookup.rows[0].id;
     }
 
     if (!role_id) return res.status(400).json({ success: false, message: "Role ID or Role Name is required" });
@@ -82,10 +82,10 @@ exports.inviteUser = async (req, res) => {
     const targetRoleName = roleCheck.rows[0]?.name;
 
     if (req.user.role !== 'SUPER_ADMIN' && targetRoleName === 'SUPER_ADMIN') {
-        return res.status(403).json({
-            success: false, 
-            message: "Security Violation: Only a Super Admin can invite another Super Admin. As a Tenant Admin, you can invite other Tenant Admins or Operators."
-        });
+      return res.status(403).json({
+        success: false,
+        message: "Security Violation: Only a Super Admin can invite another Super Admin. As a Tenant Admin, you can invite other Tenant Admins or Operators."
+      });
     }
 
     const scopeType = (merchant_id && merchant_id !== finalTenantId) ? 'merchant' : 'tenant';
@@ -114,17 +114,17 @@ exports.inviteUser = async (req, res) => {
     // Email logic (Dynamic URL support)
     let inviteLink;
     if (web_app_url) {
-        // Append token to custom frontend URL
-        const separator = web_app_url.includes('?') ? '&' : '?';
-        inviteLink = `${web_app_url}${separator}token=${rawToken}`;
+      // Append token to custom frontend URL
+      const separator = web_app_url.includes('?') ? '&' : '?';
+      inviteLink = `${web_app_url}${separator}token=${rawToken}`;
     } else {
-        const frontendUrl = (process.env.FRONTEND_URL || "https://atpl-tms-frontend.onrender.com").replace(/\/$/, "");
-        inviteLink = `${frontendUrl}/register?token=${rawToken}`;
+      const frontendUrl = (process.env.FRONTEND_URL || "https://atpl-tms-frontend.onrender.com").replace(/\/$/, "");
+      inviteLink = `${frontendUrl}/register?token=${rawToken}`;
     }
 
-    await sendInviteEmail(email, inviteLink, { 
-        companyName: req.body.company_name || "Enterprise TMS",
-        roleName: role_name || "Team Member"
+    await sendInviteEmail(email, inviteLink, {
+      companyName: req.body.company_name || "Enterprise TMS",
+      roleName: role_name || "Team Member"
     });
 
     await logAudit(finalTenantId, req.user.id, "user.invite", "USER_INVITATION", inviteId, { email, scopeType });
@@ -216,33 +216,33 @@ exports.deleteUser = async (req, res) => {
 
 // 7. Get All Pending Invites
 exports.getInvitations = async (req, res) => {
-    try {
-        let query = "SELECT i.*, r.name as role_name FROM user_invitations i JOIN roles r ON i.role_id = r.id WHERE i.deleted_at IS NULL";
-        const params = [];
+  try {
+    let query = "SELECT i.*, r.name as role_name FROM user_invitations i JOIN roles r ON i.role_id = r.id WHERE i.deleted_at IS NULL";
+    const params = [];
 
-        if (req.user.role !== "SUPER_ADMIN") {
-            params.push(req.user.tenant_id);
-            query += " AND i.tenant_id = $1";
-        }
-        query += " ORDER BY i.created_at DESC";
-
-        const result = await pool.query(query, params);
-        res.json({ success: true, data: result.rows });
-    } catch (error) {
-        res.status(500).json({ success: false, message: "Server error" });
+    if (req.user.role !== "SUPER_ADMIN") {
+      params.push(req.user.tenant_id);
+      query += " AND i.tenant_id = $1";
     }
+    query += " ORDER BY i.created_at DESC";
+
+    const result = await pool.query(query, params);
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server error" });
+  }
 };
 
 // 8. Revoke Invitation
 exports.deleteInvitation = async (req, res) => {
-    const { id } = req.params;
-    try {
-        const result = await pool.query("UPDATE user_invitations SET deleted_at = NOW() WHERE id = $1 RETURNING *", [id]);
-        if (result.rowCount === 0) return res.status(404).json({ message: "Invitation not found" });
+  const { id } = req.params;
+  try {
+    const result = await pool.query("UPDATE user_invitations SET deleted_at = NOW() WHERE id = $1 RETURNING *", [id]);
+    if (result.rowCount === 0) return res.status(404).json({ message: "Invitation not found" });
 
-        await logAudit(result.rows[0].tenant_id, req.user.id, "user.invite_revoked", "USER_INVITATION", id);
-        res.json({ success: true, message: "Invitation revoked successfully" });
-    } catch (error) {
-        res.status(500).json({ success: false, message: "Server error" });
-    }
+    await logAudit(result.rows[0].tenant_id, req.user.id, "user.invite_revoked", "USER_INVITATION", id);
+    res.json({ success: true, message: "Invitation revoked successfully" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server error" });
+  }
 };

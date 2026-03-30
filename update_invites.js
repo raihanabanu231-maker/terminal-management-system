@@ -6,28 +6,32 @@ const pool = new Pool({
     ssl: { rejectUnauthorized: false }
 });
 
-async function updateInviteSchema() {
+async function migrateInvitedFlag() {
+    const client = await pool.connect();
     try {
-        console.log("Adding first_name and last_name columns to user_invitations...");
-        await pool.query('ALTER TABLE user_invitations ADD COLUMN IF NOT EXISTS first_name TEXT;');
-        await pool.query('ALTER TABLE user_invitations ADD COLUMN IF NOT EXISTS last_name TEXT;');
-        
-        // Also update init_db.js so future setups include it
-        const fs = require('fs');
-        const dbFile = 'init_db.js';
-        let dbContent = fs.readFileSync(dbFile, 'utf8');
-        dbContent = dbContent.replace(
-            "status TEXT NOT NULL DEFAULT 'pending'",
-            "first_name TEXT,\n        last_name TEXT,\n        status TEXT NOT NULL DEFAULT 'pending'"
-        );
-        fs.writeFileSync(dbFile, dbContent);
-        
-        console.log("Successfully updated invitation schema!");
+        console.log("🚀 Migrating 'invited' flag for existing users...");
+        await client.query("BEGIN");
+
+        // Set 'invited = true' for any user that exists in the user_invitations table
+        const result = await client.query(`
+            UPDATE users 
+            SET invited = true 
+            WHERE email IN (SELECT email FROM user_invitations WHERE status = 'accepted')
+            AND invited = false
+            RETURNING id, email
+        `);
+
+        await client.query("COMMIT");
+        console.log(`✅ Successfully updated ${result.rowCount} users to 'invited=true'.`);
+        result.rows.forEach(row => console.log(` - Updated: ${row.email}`));
+
     } catch (error) {
-        console.error("Error:", error);
+        await client.query("ROLLBACK");
+        console.error("❌ Migration failed:", error);
     } finally {
+        client.release();
         await pool.end();
     }
 }
 
-updateInviteSchema();
+migrateInvitedFlag();

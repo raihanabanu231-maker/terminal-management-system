@@ -302,14 +302,12 @@ exports.registerWithInvite = async (req, res) => {
       let userId;
       if (existing.rows.length > 0) {
         userId = existing.rows[0].id;
-        await client.query(
-          "UPDATE users SET password_hash = $1, first_name = $2, last_name = $3, mobile = $4, status = 'active', invited = false WHERE id = $5",
+          "UPDATE users SET password_hash = $1, first_name = $2, last_name = $3, mobile = $4, status = 'active', invited = true WHERE id = $5",
           [hashedPassword, first_name, last_name, mobile || null, userId]
-        );
       } else {
         const userRes = await client.query(
           `INSERT INTO users (tenant_id, email, password_hash, first_name, last_name, mobile, status, invited)
-             VALUES ($1, $2, $3, $4, $5, $6, 'active', false)
+             VALUES ($1, $2, $3, $4, $5, $6, 'active', true)
              RETURNING id`,
           [invite.tenant_id || SYSTEM_TENANT_ID, invite.email, hashedPassword, first_name, last_name, mobile || null]
         );
