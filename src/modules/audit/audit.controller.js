@@ -165,11 +165,14 @@ exports.receiveDeviceLogs = async (req, res) => {
         `, [deviceId]);
 
         const auditEnabled = configRes.rows[0]?.audit_logging_enabled ?? true;
-        const merchantId = configRes.rows[0]?.merchant_id;
-        const merchantPath = configRes.rows[0]?.merchant_path;
-        const tenantName = configRes.rows[0]?.tenant_name;
+        const merchantId = configRes.rows[0]?.merchant_id || null;
+        const merchantPath = configRes.rows[0]?.merchant_path || '/';
+        const tenantName = configRes.rows[0]?.tenant_name || 'System';
 
-        if (!auditEnabled) return res.status(403).json({ success: false, message: "Audit logging disabled." });
+        if (!auditEnabled) {
+            console.log(`Log blocked: Audit disabled for device ${deviceId}`);
+            return res.status(200).json({ success: true, message: "Logging not enabled for this scope." });
+        }
 
         const client = await pool.connect();
         try {
@@ -178,11 +181,11 @@ exports.receiveDeviceLogs = async (req, res) => {
                 await client.query(
                     `INSERT INTO device_audit_logs (device_id, tenant_id, tenant_name, merchant_id, merchant_path, event_type, message, timestamp)
                      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-                    [deviceId, tenantId, tenantName, merchantId, merchantPath, log.event_type, log.message, log.timestamp || new Date()]
+                    [deviceId, tenantId, tenantName, merchantId, merchantPath, log.event_type, log.message, log.timestamp ? new Date(log.timestamp) : new Date()]
                 );
             }
             await client.query("COMMIT");
-            res.status(201).json({ success: true, message: "Logs processed." });
+            res.status(201).json({ success: true, message: "Logs successfully recorded." });
         } catch (dbErr) {
             await client.query("ROLLBACK");
             throw dbErr;
