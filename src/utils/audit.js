@@ -1,11 +1,14 @@
 const pool = require("../config/db");
+const crypto = require("crypto");
 
 /**
- * Robust utility to record system and device logs.
- * Designed to never crash the main application flow.
+ * Indestructible utility to record system and device logs.
+ * Now manually generates UUIDs to prevent database-specific rejection.
  */
 exports.logAudit = async (tenantId, userId, action, resourceType, resourceId, details = null) => {
     try {
+        const logId = crypto.randomUUID();
+        
         // 1. Resolve Tenant Name (Safe fallback)
         let tenantName = 'System';
         if (tenantId) {
@@ -28,23 +31,24 @@ exports.logAudit = async (tenantId, userId, action, resourceType, resourceId, de
             } catch (e) { console.error("Audit Device Lookup Fail:", e.message); }
         }
 
-        // 3. Save to System Audit Table
+        // 3. Save to System Audit Table (Explicit ID)
         try {
             await pool.query(
-                `INSERT INTO audit_logs (tenant_id, tenant_name, user_id, action, resource_type, resource_id, details, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
-                [tenantId, tenantName, userId, action, resourceType, resourceId, details ? JSON.stringify(details) : null]
+                `INSERT INTO audit_logs (id, tenant_id, tenant_name, user_id, action, resource_type, resource_id, details, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
+                [logId, tenantId, tenantName, userId, action, resourceType, resourceId, details ? JSON.stringify(details) : null]
             );
         } catch (e) { console.error("Audit System Log Insert Fail:", e.message); }
 
-        // 4. Save to Device Audit Table (Mirror)
+        // 4. Save to Device Audit Table (Explicit ID)
         if (resourceType === 'DEVICE' && resourceId) {
+            const devLogId = crypto.randomUUID();
             try {
                 const msg = `Action: ${action}${details ? ' - Details: ' + JSON.stringify(details) : ''}`.substring(0, 1000);
                 await pool.query(
-                    `INSERT INTO device_audit_logs (device_id, tenant_id, tenant_name, merchant_id, merchant_path, event_type, message, timestamp)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
-                    [resourceId, tenantId, tenantName, merchantId, merchantPath, action, msg]
+                    `INSERT INTO device_audit_logs (id, device_id, tenant_id, tenant_name, merchant_id, merchant_path, event_type, message, timestamp)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
+                    [devLogId, resourceId, tenantId, tenantName, merchantId, merchantPath, action, msg]
                 );
             } catch (e) { console.error("Audit Device Log Insert Fail:", e.message); }
         }
