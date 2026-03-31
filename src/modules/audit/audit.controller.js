@@ -38,7 +38,8 @@ exports.getAuditLogs = async (req, res) => {
             query += ` AND al.user_id = $${params.length}`;
         }
 
-        query += ` ORDER BY al.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+        const currentParamsCount = params.length;
+        query += ` ORDER BY al.created_at DESC LIMIT $${currentParamsCount + 1} OFFSET $${currentParamsCount + 2}`;
         params.push(limit, offset);
 
         const result = await pool.query(query, params);
@@ -55,13 +56,12 @@ exports.getAuditLogs = async (req, res) => {
  * 2. Retrieve Device Audit Logs (Android Generated)
  * GET /api/v1/audit/devices
  */
-// 4. View Device Event Logs (Hardware - Dashboard)
 exports.getDeviceAuditLogs = async (req, res) => {
     try {
         const { role: userRole, tenant_id: userTenantId } = req.user;
         const { limit = 50, offset = 0, device_id } = req.query;
 
-        // 🎯 V7 HELPER: Get User Scope Path
+        // 🎯 SCOPING: Hierarchical path check
         const roles = req.user.roles || [];
         let userScopePath = "/";
         if (userRole !== "SUPER_ADMIN") {
@@ -70,23 +70,23 @@ exports.getDeviceAuditLogs = async (req, res) => {
         }
 
         let query = `
-            SELECT dal.*, d.serial 
+            SELECT dal.*, d.serial, d.model 
             FROM device_audit_logs dal
             LEFT JOIN devices d ON dal.device_id = d.id
             WHERE 1=1
         `;
         const params = [];
 
-        // 🛡️ 1. SECURITY: Tenant Lockdown
+        // 🛡️ SECURITY: Tenant Lockdown
         if (userRole !== "SUPER_ADMIN") {
             params.push(userTenantId);
             query += ` AND dal.tenant_id = $${params.length}`;
         }
 
-        // 🛡️ 2. SECURITY: Hierarchical Scoping
-        if (userScopePath !== "/") {
+        // 🛡️ SECURITY: Hierarchical Scoping
+        if (userScopePath && userScopePath !== "/") {
             params.push(userScopePath);
-            query += ` AND (dal.merchant_path || '/') ILIKE $${params.length} || '%'`;
+            query += ` AND (COALESCE(dal.merchant_path, '/') || '/') ILIKE $${params.length} || '%'`;
         }
 
         if (device_id) {
@@ -94,8 +94,8 @@ exports.getDeviceAuditLogs = async (req, res) => {
             query += ` AND dal.device_id = $${params.length}`;
         }
 
-        // 3. Final Query Assembly (Fixing Indexing Conflicts Definitively)
-        query += ` ORDER BY dal.timestamp DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+        const currentParamsCount = params.length;
+        query += ` ORDER BY dal.timestamp DESC LIMIT $${currentParamsCount + 1} OFFSET $${currentParamsCount + 2}`;
         params.push(parseInt(limit), parseInt(offset));
 
         const result = await pool.query(query, params);
@@ -116,7 +116,6 @@ exports.getDeviceAuditLogs = async (req, res) => {
 
 /**
  * 3. Toggle Audit Logging (Admin Control)
- * PUT /api/v1/audit/config
  */
 exports.toggleAuditLogging = async (req, res) => {
     const { enabled, target_merchant_id } = req.body;
@@ -126,14 +125,12 @@ exports.toggleAuditLogging = async (req, res) => {
 
     try {
         if (target_merchant_id) {
-            // Update Merchant Level
             await pool.query(
                 "UPDATE merchants SET audit_logging_enabled = $1 WHERE id = $2 AND tenant_id = $3",
                 [enabled, target_merchant_id, tenant_id]
             );
             await logAudit(tenant_id, userId, "MERCHANT_AUDIT_TOGGLED", "MERCHANT", target_merchant_id, { enabled });
         } else {
-            // Update Tenant Level
             if (role !== "TENANT_ADMIN" && role !== "SUPER_ADMIN") return res.status(403).json({ success: false, message: "Unauthorized" });
             await pool.query("UPDATE tenants SET audit_logging_enabled = $1 WHERE id = $2", [enabled, tenant_id]);
             await logAudit(tenant_id, userId, "TENANT_AUDIT_TOGGLED", "TENANT", tenant_id, { enabled });
@@ -148,19 +145,17 @@ exports.toggleAuditLogging = async (req, res) => {
 
 /**
  * 4. Receive Device Audit Logs (From Android)
- * POST /api/v1/audit/devices/log
  */
 exports.receiveDeviceLogs = async (req, res) => {
-    const { logs } = req.body; // Expect array of { event_type, message, timestamp }
+    const { logs } = req.body;
     const deviceId = req.user.id;
     const tenantId = req.user.tenant_id;
 
     if (!Array.isArray(logs) || logs.length === 0) return res.status(400).json({ success: false, message: "Logs array is required" });
 
     try {
-        // 🛡️ SECURITY: Enforcement
         const configRes = await pool.query(`
-            SELECT COALESCE(m.audit_logging_enabled, t.audit_logging_enabled) as audit_logging_enabled, d.merchant_id
+            SELECT COALESCE(m.audit_logging_enabled, t.audit_logging_enabled) as audit_logging_enabled, d.merchant_id, d.merchant_path, d.tenant_name
             FROM devices d
             JOIN tenants t ON d.tenant_id = t.id
             LEFT JOIN merchants m ON d.merchant_id = m.id
@@ -169,29 +164,23 @@ exports.receiveDeviceLogs = async (req, res) => {
 
         const auditEnabled = configRes.rows[0]?.audit_logging_enabled ?? true;
         const merchantId = configRes.rows[0]?.merchant_id;
+        const merchantPath = configRes.rows[0]?.merchant_path;
+        const tenantName = configRes.rows[0]?.tenant_name;
 
-        if (!auditEnabled) {
-            // Ignore logs if disabled
-            return res.status(403).json({ success: false, message: "Audit logging is disabled for this store/tenant." });
-        }
+        if (!auditEnabled) return res.status(403).json({ success: false, message: "Audit logging disabled." });
 
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
-
-            // --- 🎯 NEW: Fetch Tenant Name ---
-            const tNameRes = await client.query("SELECT name FROM tenants WHERE id = $1", [tenantId]);
-            const tenantName = tNameRes.rows[0]?.name || "Unknown";
-
             for (const log of logs) {
                 await client.query(
-                    `INSERT INTO device_audit_logs (device_id, tenant_id, tenant_name, merchant_id, event_type, message, timestamp)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-                    [deviceId, tenantId, tenantName, merchantId, log.event_type, log.message, log.timestamp || new Date()]
+                    `INSERT INTO device_audit_logs (device_id, tenant_id, tenant_name, merchant_id, merchant_path, event_type, message, timestamp)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                    [deviceId, tenantId, tenantName, merchantId, merchantPath, log.event_type, log.message, log.timestamp || new Date()]
                 );
             }
             await client.query("COMMIT");
-            res.status(201).json({ success: true, message: `${logs.length} logs processed.` });
+            res.status(201).json({ success: true, message: "Logs processed." });
         } catch (dbErr) {
             await client.query("ROLLBACK");
             throw dbErr;
