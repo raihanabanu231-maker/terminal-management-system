@@ -21,8 +21,13 @@ exports.logAudit = async (tenantId, userId, action, resourceType, resourceId, ne
         const finalTenantId = tenantId || SYSTEM_TENANT_ID;
         const finalResourceId = resourceId || "00000000-0000-0000-0000-000000000000"; // Null-safe UUID for system-level actions
         
+        // --- 🎯 NEW: Fetch Tenant Name for direct column population ---
+        const tNameRes = await pool.query("SELECT name FROM tenants WHERE id = $1", [finalTenantId]);
+        const tenantName = tNameRes.rows[0]?.name || "Unknown Tenant";
+
         const payload = JSON.stringify({
             tenant_id: finalTenantId,
+            tenant_name: tenantName,
             user_id: userId,
             action,
             resource_type: resourceType,
@@ -39,10 +44,11 @@ exports.logAudit = async (tenantId, userId, action, resourceType, resourceId, ne
 
         await pool.query(
             `INSERT INTO audit_logs 
-               (tenant_id, user_id, action, resource_type, resource_id, new_values, old_values, checksum)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+               (tenant_id, tenant_name, user_id, action, resource_type, resource_id, new_values, old_values, checksum)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
             [
                 finalTenantId,
+                tenantName,
                 userId,
                 action,
                 resourceType,
@@ -67,11 +73,12 @@ exports.logAudit = async (tenantId, userId, action, resourceType, resourceId, ne
                     
                     await pool.query(
                         `INSERT INTO device_audit_logs 
-                           (device_id, tenant_id, merchant_id, merchant_path, event_type, message, timestamp) 
-                         VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+                           (device_id, tenant_id, tenant_name, merchant_id, merchant_path, event_type, message, timestamp) 
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
                         [
                             finalResourceId,
                             tId || finalTenantId,
+                            tenantName,
                             mId || null,
                             mPath || "/",
                             String(action).substring(0, 50), 

@@ -178,11 +178,16 @@ exports.receiveDeviceLogs = async (req, res) => {
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
+
+            // --- 🎯 NEW: Fetch Tenant Name ---
+            const tNameRes = await client.query("SELECT name FROM tenants WHERE id = $1", [tenantId]);
+            const tenantName = tNameRes.rows[0]?.name || "Unknown";
+
             for (const log of logs) {
                 await client.query(
-                    `INSERT INTO device_audit_logs (device_id, tenant_id, merchant_id, event_type, message, timestamp)
-                     VALUES ($1, $2, $3, $4, $5, $6)`,
-                    [deviceId, tenantId, merchantId, log.event_type, log.message, log.timestamp || new Date()]
+                    `INSERT INTO device_audit_logs (device_id, tenant_id, tenant_name, merchant_id, event_type, message, timestamp)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                    [deviceId, tenantId, tenantName, merchantId, log.event_type, log.message, log.timestamp || new Date()]
                 );
             }
             await client.query("COMMIT");

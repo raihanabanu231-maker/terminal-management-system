@@ -514,11 +514,14 @@ exports.ackCommand = async (req, res) => {
 
             // 2. 🎯 AUTOMATIC DEVICE LOG MIRROR (V7 ARCHITECT SPEC)
             // Mirrors the command success into the hardware-specific audit history table
+            const tNameRes = await pool.query("SELECT name FROM tenants WHERE id = $1", [tenantId]);
+            const tenantName = tNameRes.rows[0]?.name || "Unknown";
+
             await pool.query(
                 `INSERT INTO device_audit_logs 
-                 (device_id, tenant_id, merchant_id, merchant_path, event_type, message, timestamp) 
-                 VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-                [deviceId, tenantId, merchantId || null, merchantPath || '/', deviceLogEvent, deviceLogMessage]
+                 (device_id, tenant_id, tenant_name, merchant_id, merchant_path, event_type, message, timestamp) 
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
+                [deviceId, tenantId, tenantName, merchantId || null, merchantPath || '/', deviceLogEvent, deviceLogMessage]
             );
         } else {
             if (cmd.retry_count < cmd.max_retries) {
