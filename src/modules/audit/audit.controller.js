@@ -126,47 +126,65 @@ exports.receiveDeviceLogs = async (req, res) => {
     const deviceId = req.user.id;
     const tenantId = req.user.tenant_id;
 
-    if (!Array.isArray(logs) || logs.length === 0) return res.status(400).json({ success: false, message: "Logs array is required" });
+    if (!Array.isArray(logs) || logs.length === 0) {
+        return res.status(400).json({ success: false, message: "Logs array is required and cannot be empty." });
+    }
 
     try {
+        // 1. Fetch Device Context & Policy
         const dRes = await pool.query(`
             SELECT d.merchant_id, d.merchant_path, d.tenant_name, t.audit_logging_enabled as t_audit, m.audit_logging_enabled as m_audit
             FROM devices d
             JOIN tenants t ON d.tenant_id = t.id
             LEFT JOIN merchants m ON d.merchant_id = m.id
-            WHERE d.id = $1
+            WHERE d.id = $1 AND d.deleted_at IS NULL
         `, [deviceId]);
 
-        if (dRes.rows.length > 0) {
-            const dev = dRes.rows[0];
-            const isEnabled = dev.m_audit !== null ? dev.m_audit : (dev.t_audit !== null ? dev.t_audit : true);
-            
-            if (!isEnabled) return res.status(200).json({ success: true, message: "Logging policy is OFF" });
+        if (dRes.rows.length === 0) {
+             return res.status(404).json({ success: false, message: "Device context not found or device is inactive." });
+        }
 
-            const client = await pool.connect();
-            try {
-                await client.query("BEGIN");
-                for (const log of logs) {
-                    await client.query(
-                        `INSERT INTO device_audit_logs (device_id, tenant_id, tenant_name, merchant_id, merchant_path, event_type, message, timestamp)
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-                        [deviceId, tenantId, dev.tenant_name || 'System', dev.merchant_id, dev.merchant_path || '/', log.event_type || 'INFO', log.message || '', log.timestamp ? new Date(log.timestamp) : new Date()]
-                    );
-                }
-                await client.query("COMMIT");
-                res.status(201).json({ success: true, message: `Successfully stored ${logs.length} logs` });
-            } catch (dbErr) {
-                await client.query("ROLLBACK");
-                throw dbErr;
-            } finally {
-                client.release();
+        const dev = dRes.rows[0];
+        // RESOLUTION: Merchant > Tenant > Default (True)
+        const isEnabled = dev.m_audit !== null ? dev.m_audit : (dev.t_audit !== null ? dev.t_audit : true);
+        
+        if (!isEnabled) {
+            console.log(`[AUDIT] Policy is DISABLED for device ${deviceId}. Ignoring ${logs.length} logs.`);
+            return res.status(200).json({ success: true, message: "Logging policy is OFF" });
+        }
+
+        // 2. Perform Batch Insertion
+        const client = await pool.connect();
+        try {
+            await client.query("BEGIN");
+            for (const log of logs) {
+                await client.query(
+                    `INSERT INTO device_audit_logs (device_id, tenant_id, tenant_name, merchant_id, merchant_path, event_type, message, timestamp)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                    [
+                        deviceId, 
+                        tenantId, 
+                        dev.tenant_name || 'System', 
+                        dev.merchant_id, 
+                        dev.merchant_path || '/', 
+                        log.event_type || 'DEVICE_LOG', 
+                        log.message || '', 
+                        log.timestamp ? new Date(log.timestamp) : new Date()
+                    ]
+                );
             }
-        } else {
-            res.status(404).json({ success: false, message: "Device not found for log submission" });
+            await client.query("COMMIT");
+            console.log(`[AUDIT] Successfully stored ${logs.length} logs for device ${deviceId}`);
+            res.status(201).json({ success: true, message: `Successfully stored ${logs.length} logs` });
+        } catch (dbErr) {
+            await client.query("ROLLBACK");
+            throw dbErr;
+        } finally {
+            client.release();
         }
     } catch (error) {
         console.error("ReceiveDeviceLogs Error:", error);
-        res.status(500).json({ success: false, message: "Internal server error" });
+        res.status(500).json({ success: false, message: "Internal server error while persisting logs.", detail: error.message });
     }
 };
 
@@ -284,17 +302,15 @@ exports.getAuditPolicy = async (req, res) => {
             FROM devices d
             JOIN tenants t ON d.tenant_id = t.id
             LEFT JOIN merchants m ON d.merchant_id = m.id
-            WHERE d.id = $1
+            WHERE d.id = $1 AND d.deleted_at IS NULL
         `, [deviceId]);
 
         if (dRes.rows.length === 0) {
-            return res.status(404).json({ success: false, message: "Device not found" });
+            return res.status(404).json({ success: false, message: "Device not found or inactive." });
         }
 
         const dev = dRes.rows[0];
-        // IF merchant audit setting exists → use it
-        // ELSE IF tenant audit setting exists → use it
-        // ELSE → true
+        // Hierarchical Policy Resolution (Merchant > Tenant > Default: True)
         const isEnabled = dev.m_audit !== null ? dev.m_audit : (dev.t_audit !== null ? dev.t_audit : true);
 
         res.json({
@@ -304,6 +320,6 @@ exports.getAuditPolicy = async (req, res) => {
 
     } catch (error) {
         console.error("GetAuditPolicy Error:", error);
-        res.status(500).json({ success: false, message: "Server error" });
+        res.status(500).json({ success: false, message: "Internal server error fetching policy.", detail: error.message });
     }
 };
