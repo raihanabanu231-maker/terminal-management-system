@@ -1,24 +1,21 @@
 const Brevo = require('@getbrevo/brevo');
-const defaultClient = Brevo.ApiClient.instance;
 
 /**
  * Sends an invitation email to a new user via Brevo Transactional Email service.
- * Standardizes on the modern @getbrevo/brevo SDK.
+ * Standardizes on the modern @getbrevo/brevo SDK with robust initialization.
  */
 exports.sendInviteEmail = async (toEmail, inviteLink, details = {}) => {
   const { roleName, companyName } = details;
 
   // 1. Pre-flight check for environment variables
   if (!process.env.BREVO_API_KEY || !process.env.SENDER_EMAIL) {
-    console.warn("⚠️ EMAIL_CONFIG_MISSING: Invitation created but email service is not configured (BREVO_API_KEY or SENDER_EMAIL).");
+    console.error("⚠️ EMAIL_FAIL: BREVO_API_KEY or SENDER_EMAIL is not configured.");
     throw new Error("Brevo Email Service is not configured on this server.");
   }
 
-  // 2. Configure Authentications (Dynamic for multi-environment support)
-  const apiKey = defaultClient.authentications['api-key'];
-  apiKey.apiKey = process.env.BREVO_API_KEY;
-
+  // 2. Modern Brevo Initialization (Safe for newer SDK versions)
   const apiInstance = new Brevo.TransactionalEmailsApi();
+  apiInstance.setApiKey(Brevo.TransactionalEmailsApiApiKeys.apiKey, process.env.BREVO_API_KEY);
 
   console.log(`📧 Attempting to send invitation to: ${toEmail}`);
 
@@ -30,7 +27,7 @@ exports.sendInviteEmail = async (toEmail, inviteLink, details = {}) => {
         <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #ddd; padding: 25px; border-radius: 12px; background-color: #ffffff;">
           <div style="text-align: center; margin-bottom: 20px;">
             <h1 style="color: #4CAF50; margin: 0;">Welcome to ATPL TMS</h1>
-            <p style="color: #666; font-size: 0.9em; margin-top: 5px;">Unified Terminal Management</p>
+            <p style="color: #666; font-size: 0.9em; margin-top: 5px;">Unified Terminal Management System</p>
           </div>
           
           <p>Hello,</p>
@@ -50,7 +47,7 @@ exports.sendInviteEmail = async (toEmail, inviteLink, details = {}) => {
             </a>
           </div>
 
-          <p style="font-size: 0.85em; color: #888;">Note: This secure link will remain valid for **72 hours**. If you did not expect this request, please contact your administrator or ignore this email.</p>
+          <p style="font-size: 0.85em; color: #888;">Note: This secure link will remain valid for **72 hours**. If you did not expect this request, please ignore this email.</p>
           
           <hr style="border: 0; border-top: 1px solid #eee; margin: 25px 0;" />
           <p style="font-size: 11px; color: #aaa; text-align: center;">Sent securely via Terminal Management System (TMS) • ATPL Group</p>
@@ -64,18 +61,23 @@ exports.sendInviteEmail = async (toEmail, inviteLink, details = {}) => {
     // 4. Send Email
     const result = await apiInstance.sendTransacEmail(sendSmtpEmail);
     console.log(`✅ Professional Invite Sent. MessageId: ${result.messageId}`);
+    
+    // Check for success status in response (result.response.statusCode if available)
     return result;
 
   } catch (error) {
     // Extract the precise error from the response body if available
-    const errorBody = error.response && error.response.body ? JSON.stringify(error.response.body) : error.message;
+    let errorBody = error.message;
+    if (error.response && error.response.body) {
+      errorBody = JSON.stringify(error.response.body);
+    }
+    
     console.error("❌ BREVO_SERVICE_ERROR:", errorBody);
 
-    // Provide clear troubleshooting hints based on common errors
     if (errorBody.includes("unauthorized")) {
-      throw new Error("Brevo Error: Invalid API Key. Please check BREVO_API_KEY.");
+      throw new Error("Brevo Error: Invalid API Key. Please verify BREVO_API_KEY.");
     } else if (errorBody.includes("invalid_sender")) {
-      throw new Error(`Brevo Error: Sender email (${process.env.SENDER_EMAIL}) is not verified in your account.`);
+      throw new Error(`Brevo Error: Sender email (${process.env.SENDER_EMAIL}) is not authorized/verified in your Brevo account.`);
     } else {
       throw new Error(`Email delivery failed: ${errorBody}`);
     }
