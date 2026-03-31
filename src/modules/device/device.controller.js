@@ -258,6 +258,9 @@ exports.sendDeviceCommand = async (req, res) => {
 
 exports.getPendingCommands = async (req, res) => {
     try {
+        // Updated: Automatically refresh last_seen during polling to ensure better reliability
+        await pool.query("UPDATE devices SET last_seen = NOW() WHERE id = $1", [req.user.id]);
+
         const r = await pool.query("SELECT id, type, payload FROM commands WHERE device_id = $1 AND status = 'queued'", [req.user.id]);
         res.json({ success: true, commands: r.rows });
     } catch (err) { res.status(500).json({ success: false }); }
