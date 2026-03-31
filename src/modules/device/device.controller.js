@@ -46,11 +46,26 @@ exports.generateEnrollmentToken = async (req, res) => {
         );
 
         if (serial) {
+            // Fetch Tenant Name for display record
+            const tRes = await pool.query("SELECT name FROM tenants WHERE id = $1", [finalTenantId]);
+            const tenantName = tRes.rows[0]?.name || "Unknown";
+            
+            let merchantName = null;
+            if (merchant_id) {
+                const mRes = await pool.query("SELECT name FROM merchants WHERE id = $1", [merchant_id]);
+                merchantName = mRes.rows[0]?.name || "Unknown";
+            }
+
             await pool.query(
-                `INSERT INTO devices (serial, model, tenant_id, merchant_id, status, enrollment_token)
-                 VALUES ($1, $2, $3, $4, 'pending_onboard', $5)
-                 ON CONFLICT (serial) DO UPDATE SET model = COALESCE(NULLIF($2, 'Standard'), devices.model), enrollment_token = $5, status = 'pending_onboard'`,
-                [serial, model || 'Standard', finalTenantId, merchant_id || null, tokenHash]
+                `INSERT INTO devices (serial, model, tenant_id, tenant_name, merchant_id, merchant_name, status, enrollment_token)
+                 VALUES ($1, $2, $3, $4, $5, $6, 'pending_onboard', $7)
+                 ON CONFLICT (serial) DO UPDATE SET 
+                    model = COALESCE(NULLIF($2, 'Standard'), devices.model),
+                    enrollment_token = $7, 
+                    tenant_name = $4,
+                    merchant_name = $6,
+                    status = 'pending_onboard'`,
+                [serial, model || 'Standard', finalTenantId, tenantName, merchant_id || null, merchantName, tokenHash]
             );
         }
 
@@ -99,6 +114,16 @@ exports.enrollDevice = async (req, res) => {
                 return res.status(403).json({ success: false, message: "Serial mismatch" });
             }
 
+            // Fetch Names for saving in the table
+            const tRes = await pool.query("SELECT name FROM tenants WHERE id = $1", [enrollmentRecord.tenant_id]);
+            const tenantName = tRes.rows[0]?.name || "Unknown";
+            
+            let merchantName = null;
+            if (enrollmentRecord.merchant_id) {
+                const mRes = await pool.query("SELECT name FROM merchants WHERE id = $1", [enrollmentRecord.merchant_id]);
+                merchantName = mRes.rows[0]?.name || "Unknown";
+            }
+
             await pool.query("UPDATE enrollment_tokens SET remaining_enrollments = remaining_enrollments - 1 WHERE id = $1", [enrollmentRecord.id]);
 
             let normalizedPath = "/";
@@ -111,14 +136,16 @@ exports.enrollDevice = async (req, res) => {
 
             if (actualSerial) {
                 const deviceRes = await pool.query(
-                    `INSERT INTO devices (serial, model, tenant_id, merchant_id, merchant_path, status, device_status, os_version)
-                     VALUES ($1, $2, $3, $4, $5, 'active', 'online', $6)
+                    `INSERT INTO devices (serial, model, tenant_id, tenant_name, merchant_id, merchant_name, merchant_path, status, device_status, os_version)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', 'online', $8)
                      ON CONFLICT (serial) DO UPDATE SET 
                         status = 'active', device_status = 'online', model = EXCLUDED.model,
                         os_version = COALESCE(EXCLUDED.os_version, devices.os_version),
+                        tenant_name = $4,
+                        merchant_name = $6,
                         merchant_path = EXCLUDED.merchant_path, last_seen = NOW(), deleted_at = NULL
                      RETURNING *`,
-                    [actualSerial, actualModel, enrollmentRecord.tenant_id, enrollmentRecord.merchant_id, normalizedPath, os_version || 'Unknown']
+                    [actualSerial, actualModel, enrollmentRecord.tenant_id, tenantName, enrollmentRecord.merchant_id, merchantName, normalizedPath, os_version || 'Unknown']
                 );
                 device = deviceRes.rows[0];
                 await pool.query("DELETE FROM device_telemetry WHERE device_id = $1", [device.id]);
@@ -212,7 +239,7 @@ exports.ackCommand = async (req, res) => {
 
 exports.getDevices = async (req, res) => {
     try {
-        const r = await pool.query("SELECT d.*, t.name as tenant_name FROM devices d JOIN tenants t ON d.tenant_id = t.id WHERE d.deleted_at IS NULL");
+        const r = await pool.query("SELECT * FROM devices WHERE deleted_at IS NULL ORDER BY created_at DESC");
         res.json({ success: true, data: r.rows });
     } catch (err) { res.status(500).json({ success: false }); }
 };
@@ -234,7 +261,15 @@ exports.getCommandStatus = async (req, res) => {
 exports.updateDevice = async (req, res) => {
     try {
         const { model, merchant_id } = req.body;
-        await pool.query("UPDATE devices SET model = $1, merchant_id = $2 WHERE id = $3", [model, merchant_id, req.params.id]);
+        
+        // Fetch Names if moved to new merchant
+        let merchantName = null;
+        if (merchant_id) {
+            const mRes = await pool.query("SELECT name FROM merchants WHERE id = $1", [merchant_id]);
+            merchantName = mRes.rows[0]?.name || "Unknown";
+        }
+
+        await pool.query("UPDATE devices SET model = $1, merchant_id = $2, merchant_name = $3 WHERE id = $4", [model, merchant_id, merchantName, req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ success: false }); }
 };
