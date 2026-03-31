@@ -1,4 +1,4 @@
-﻿const pool = require("../../config/db");
+const pool = require("../../config/db");
 const crypto = require("crypto"); // v7.0.2 - Audit Sync Forced Redeploy
 const QRCode = require("qrcode");
 const { logAudit } = require("../../utils/audit");
@@ -113,7 +113,7 @@ exports.enrollDevice = async (req, res) => {
     // Support both Legacy Serial and Modern Android ID
     const actualToken = token || enrollment_token;
     const actualSerial = serial || serial_number || android_id;
-    const actualModel = device_model || model || 'Standard';
+    const actualModel = device_model || 'Standard';
 
     if (!actualToken) {
         return res.status(400).json({ success: false, message: "enrollment_token is required" });
@@ -138,12 +138,12 @@ exports.enrollDevice = async (req, res) => {
             // New flow: enrollment_tokens table
             enrollmentRecord = enrollTokenRes.rows[0];
 
-            // ðŸ›¡ï¸ SECURITY CHECK: Serial lock enforcement (Case-Insensitive & Trimmed)
+            // 🛡️ SECURITY CHECK: Serial lock enforcement (Case-Insensitive & Trimmed)
             const storedSerial = String(enrollmentRecord.serial || "").trim().toLowerCase();
             const incomingSerial = String(actualSerial || "").trim().toLowerCase();
 
             if (enrollmentRecord.serial && storedSerial !== incomingSerial) {
-                console.error(`ðŸš¨ ENROLL_REJECTED: Serial Mismatch. Expected: [${enrollmentRecord.serial}], Got: [${actualSerial}]`);
+                console.error(`🚨 ENROLL_REJECTED: Serial Mismatch. Expected: [${enrollmentRecord.serial}], Got: [${actualSerial}]`);
                 return res.status(403).json({
                     success: false,
                     message: `Security Violation: This QR code is locked to serial [${enrollmentRecord.serial}], but your device reported [${actualSerial}]. Case and spaces matter!`
@@ -181,9 +181,10 @@ exports.enrollDevice = async (req, res) => {
                         deleted_at = NULL
                      RETURNING *`,
                     [actualSerial, actualModel, enrollmentRecord.tenant_id, enrollmentRecord.merchant_id, normalizedPath, os_version || 'Unknown']
+                );
                 device = deviceRes.rows[0];
 
-                // ðŸ”¥ CLEAN SLATE REQUIREMENT: The user specifically requested that re-enrolling 
+                // 🔥 CLEAN SLATE REQUIREMENT: The user specifically requested that re-enrolling 
                 // a device must completely destroy testing/historical telemetry so it provides a fresh UI.
                 await pool.query("DELETE FROM device_telemetry WHERE device_id = $1", [device.id]);
             }
@@ -389,10 +390,11 @@ exports.sendDeviceCommand = async (req, res) => {
 
         const commandId = cmdRes.rows[0].id;
         
-        // ðŸŽ¯ FULL COMMAND AUDIT: Map all commands to descriptive labels
+        // 🎯 FULL COMMAND AUDIT: Map all commands to descriptive labels
         let auditAction = `COMMAND_${type}`;
+        const state = payload?.state ? String(payload.state).toUpperCase() : "TOGGLE";
+
         if (type === "TOGGLE_BLUETOOTH" || type === "TOGGLE_WIFI") {
-            const state = payload?.state ? String(payload.state).toUpperCase() : "TOGGLE";
             auditAction = `DEVICE_${type.substring(7)}_${state}`; // e.g., DEVICE_BLUETOOTH_ON
         } else if (type === "REBOOT" || type === "SHUTDOWN" || type === "WIPE") {
             auditAction = `DEVICE_${type}_INITIATED`;
@@ -492,27 +494,23 @@ exports.ackCommand = async (req, res) => {
             const { tenant_id: tenantId, merchant_id: merchantId, merchant_path: merchantPath } = deviceCheck.rows[0] || {};
             
             let auditAction = `COMMAND_${cmd.type}_SUCCESS`;
-            let deviceLogEvent = cmd.type; // e.g. TOGGLE_BLUETOOTH
             let deviceLogMessage = `Command ${cmd.type} completed successfully.`;
 
             if (cmd.type === "TOGGLE_BLUETOOTH" || cmd.type === "TOGGLE_WIFI") {
                 const state = cmd.payload?.state ? String(cmd.payload.state).toUpperCase() : "SUCCESS";
                 auditAction = `DEVICE_${cmd.type.substring(7)}_${state}_SUCCESS`;
-                deviceLogEvent = `${cmd.type.substring(7)}_${state}`; // e.g. BLUETOOTH_ON
                 deviceLogMessage = `${cmd.type.substring(7)} command executed: State changed to ${state}.`;
             } else if (cmd.type === "REBOOT" || cmd.type === "WIPE") {
                 auditAction = `DEVICE_${cmd.type}_SUCCESS`;
-                deviceLogEvent = `${cmd.type}_SUCCESS`;
             }
-               // 1. Log to System Audit (Web Dashboard)
+
+            // 1. Log to System Audit (Web Dashboard)
             await logAudit(tenantId || null, null, auditAction, "DEVICE", deviceId, { 
                 command_id: commandId, 
                 execution_time_ms,
                 type: cmd.type,
                 message: deviceLogMessage
             });
-
-            );
         } else {
             if (cmd.retry_count < cmd.max_retries) {
                 // ... (Retry logic, no change needed here)
@@ -521,17 +519,19 @@ exports.ackCommand = async (req, res) => {
                      SET status = 'queued', retry_count = retry_count + 1, payload = payload || $1::jsonb 
                      WHERE id = $2`,
                     [JSON.stringify({ last_error_message: error_message }), commandId]
+                );
             } else {
                 await pool.query(
                     `UPDATE commands 
                      SET status = 'failed', acked_at = NOW(), payload = payload || $1::jsonb 
                      WHERE id = $2`,
                     [JSON.stringify({ result_data, error_message, final_failure: true }), commandId]
+                );
                 
                 const deviceCheck = await pool.query("SELECT tenant_id FROM devices WHERE id = $1", [deviceId]);
                 const tenantId = deviceCheck.rows[0]?.tenant_id;
                 
-                let auditAction = `COMMAND_${cmd.type}_FAILURE`;
+                const auditAction = `COMMAND_${cmd.type}_FAILURE`;
                 await logAudit(tenantId || null, null, auditAction, "DEVICE", deviceId, { 
                     command_id: commandId, 
                     error_message, 
@@ -596,7 +596,7 @@ exports.getDevices = async (req, res) => {
             params.push(req.user.tenant_id);
             query += ` AND d.tenant_id = $${params.length}`;
 
-            // ðŸŽ¯ NEW: Merchant Scoping
+            // 🎯 NEW: Merchant Scoping
             // Check if user has a merchant scope in their JWT
             const merchantRole = req.user.roles?.find(r => r.scope === 'merchant');
             if (merchantRole) {
@@ -783,7 +783,7 @@ exports.startCleanupJob = () => {
     setInterval(async () => {
         try {
             await pool.query("DELETE FROM device_telemetry WHERE created_at < NOW() - INTERVAL '30 days'");
-            console.log("ðŸ› ï¸ Data Retention Cleanup completed.");
+            console.log("🛠️ Data Retention Cleanup completed.");
         } catch (error) {
             console.error("Cleanup Job Error:", error);
         }
@@ -797,157 +797,43 @@ exports.startExpiryJob = () => {
             const res = await pool.query(
                 `UPDATE commands SET status = 'expired' 
                  WHERE status IN ('queued', 'sent') 
-                 AND expires_at < NOW() 
+                 AND expires_at < NOW()
                  RETURNING id`
             );
             if (res.rowCount > 0) {
-                console.log(`â³ Expired ${res.rowCount} stale device commands.`);
+                console.log(`⏱️ Expired ${res.rowCount} commands.`);
             }
         } catch (error) {
             console.error("Expiry Job Error:", error);
         }
-    }, 30 * 1000); // Every 30 seconds per spec
+    }, 30000);
 };
 
-// 8. Command Retry Job (Jayakumar Spec: every 1 minute)
-// Auto-retries commands that were SENT but never ACKed within 60 seconds
-exports.startRetryJob = () => {
-    setInterval(async () => {
-        try {
-            const res = await pool.query(
-                `UPDATE commands 
-                 SET status = 'queued', retry_count = retry_count + 1 
-                 WHERE status = 'sent' 
-                 AND sent_at < NOW() - INTERVAL '60 seconds'
-                 AND retry_count < max_retries
-                 RETURNING id, device_id, retry_count`
-            );
-            if (res.rowCount > 0) {
-                console.log(`ðŸ”„ Retried ${res.rowCount} unacknowledged commands.`);
-                for (const row of res.rows) {
-                    // Fetch the device's tenant ID for correct audit scoping
-                    const deviceCheck = await pool.query("SELECT tenant_id FROM devices WHERE id = $1", [row.device_id]);
-                    const tenantId = deviceCheck.rows[0]?.tenant_id;
-                    await logAudit(tenantId || null, null, "COMMAND_RETRY", "DEVICE", row.device_id, {
-                        command_id: row.id,
-                        attempt: row.retry_count
-                    });
-                }
-            }
-
-            // Mark commands that exceeded max retries as FAILED
-            const failedRes = await pool.query(
-                `UPDATE commands 
-                 SET status = 'failed', acked_at = NOW()
-                 WHERE status = 'sent'
-                 AND sent_at < NOW() - INTERVAL '60 seconds'
-                 AND retry_count >= max_retries
-                 RETURNING id, device_id`
-            );
-            if (failedRes.rowCount > 0) {
-                console.log(`âŒ Failed ${failedRes.rowCount} commands (max retries exceeded).`);
-                for (const row of failedRes.rows) {
-                    // Fetch the device's tenant ID for correct audit scoping
-                    const deviceCheck = await pool.query("SELECT tenant_id FROM devices WHERE id = $1", [row.device_id]);
-                    const tenantId = deviceCheck.rows[0]?.tenant_id;
-                    await logAudit(tenantId || null, null, "COMMAND_FAILED", "DEVICE", row.device_id, {
-                        command_id: row.id,
-                        reason: "max_retries_exceeded"
-                    });
-                }
-            }
-        } catch (error) {
-            console.error("Retry Job Error:", error);
-        }
-    }, 60 * 1000); // Every 1 minute per spec
-};
-
-exports.updateDevice = async (req, res) => {
-    const { id } = req.params;
-    const { model, status, merchant_id } = req.body;
-    const { tenant_id, role } = req.user;
-
-    try {
-        // Find device
-        const checkRes = await pool.query("SELECT * FROM devices WHERE id = $1", [id]);
-        if (checkRes.rows.length === 0) return res.status(404).json({ success: false, message: "Device not found" });
-
-        const device = checkRes.rows[0];
-
-        // Authorization
-        if (role !== "SUPER_ADMIN" && device.tenant_id !== tenant_id) {
-            return res.status(403).json({ success: false, message: "Unauthorized tenant scope" });
-        }
-
-        const result = await pool.query(
-            `UPDATE devices SET 
-                model = COALESCE($1, model), 
-                status = COALESCE($2, status), 
-                merchant_id = COALESCE($3, merchant_id) 
-             WHERE id = $4 RETURNING *`,
-            [model, status, merchant_id, id]
-        );
-
-        res.json({ success: true, message: "Device updated successfully", device: result.rows[0] });
-    } catch (error) {
-        console.error("UpdateDevice Error:", error);
-        res.status(500).json({ success: false, message: "Server error" });
-    }
-};
-
+// 8. Delete Device (Soft Delete)
 exports.deleteDevice = async (req, res) => {
     const { id } = req.params;
     const { tenant_id, role } = req.user;
 
     try {
-        // Find device
-        const checkRes = await pool.query("SELECT * FROM devices WHERE id = $1", [id]);
-        if (checkRes.rows.length === 0) return res.status(404).json({ success: false, message: "Device not found" });
+        let sql = "UPDATE devices SET deleted_at = NOW(), status = 'deleted' WHERE id = $1";
+        const params = [id];
 
-        const device = checkRes.rows[0];
-
-        // Authorization
-        if (role !== "SUPER_ADMIN" && device.tenant_id !== tenant_id) {
-            return res.status(403).json({ success: false, message: "Unauthorized tenant scope" });
+        if (role !== "SUPER_ADMIN") {
+            sql += " AND tenant_id = $2";
+            params.push(tenant_id);
         }
 
-        const result = await pool.query("UPDATE devices SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING *", [id]);
+        const result = await pool.query(sql, params);
 
-        if (result.rows.length === 0) {
-            return res.status(404).json({ success: false, message: "Device not found or already deleted" });
+        if (result.rowCount === 0) {
+            return res.status(404).json({ success: false, message: "Device not found or unauthorized" });
         }
+
+        await logAudit(tenant_id, req.user.id, "DEVICE_DELETED", "DEVICE", id);
 
         res.json({ success: true, message: "Device soft-deleted successfully" });
     } catch (error) {
         console.error("DeleteDevice Error:", error);
         res.status(500).json({ success: false, message: "Server error" });
-    }
-};
-
-// 10. Check Enrollment Status (Polling for UI to dismiss QR code)
-exports.checkEnrollmentStatus = async (req, res) => {
-    const { id } = req.params;
-    try {
-        const result = await pool.query(
-            "SELECT remaining_enrollments, max_enrollments FROM enrollment_tokens WHERE id = $1",
-            [id]
-        );
-
-        if (result.rows.length === 0) {
-            return res.status(404).json({ success: false, message: "Enrollment token not found" });
-        }
-
-        const tokenData = result.rows[0];
-        // If remaining is less than max, it means at least one device enrolled
-        const isEnrolled = tokenData.remaining_enrollments < tokenData.max_enrollments;
-
-        res.json({
-            success: true,
-            enrolled: isEnrolled,
-            remaining_enrollments: tokenData.remaining_enrollments
-        });
-    } catch (error) {
-        console.error("CHECK ENROLLMENT STATUS ERROR:", error);
-        res.status(500).json({ success: false, message: "Server error", detail: error.message });
     }
 };
