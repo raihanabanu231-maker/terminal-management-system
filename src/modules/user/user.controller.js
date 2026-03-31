@@ -57,21 +57,24 @@ exports.inviteUser = async (req, res) => {
 
     const finalTenantId = (req.user.role === "SUPER_ADMIN" && tenant_id) ? tenant_id : req.user.tenant_id;
 
-    // --- SANITIZE MERCHANT_ID (Standard across all features) ---
-    if (merchant_id === "null" || merchant_id === "undefined" || merchant_id === "" || merchant_id === finalTenantId) {
-      merchant_id = null;
-    }
+    // --- 🛡️ UUID SANITIZATION (Standard Fix for UUID type errors) ---
+    const sanitizeUuid = (val) => (val === "null" || val === "undefined" || val === "" || val === finalTenantId) ? null : val;
+    merchant_id = sanitizeUuid(merchant_id);
+    role_id = (role_id === "null" || role_id === "undefined" || role_id === "") ? null : role_id;
 
-    // --- SMART ROLE RESOLUTION (Matches Frontend 'tenant admin' to 'TENANT_ADMIN') ---
+    // --- 🎯 SMART ROLE RESOLUTION ---
     if (!role_id && role_name) {
-      // Automatically translate spaces to underscores and make UPPERCASE (e.g. 'tenant admin' -> 'TENANT_ADMIN')
-      const lookupName = role_name.trim().replace(/\s+/g, '_').toUpperCase();
+      const lookupNameUnderscore = role_name.trim().replace(/\s+/g, '_').toUpperCase();
+      const lookupNameSpace = role_name.trim();
 
       const roleLookup = await pool.query(
-        "SELECT id FROM roles WHERE (name = $1 OR name ILIKE $1) AND (tenant_id = $2 OR tenant_id IS NULL)",
-        [lookupName, finalTenantId]
+        "SELECT id FROM roles WHERE (name = $1 OR name = $2 OR name ILIKE $2) AND (tenant_id = $3 OR tenant_id IS NULL)",
+        [lookupNameUnderscore, lookupNameSpace, finalTenantId]
       );
-      if (roleLookup.rows.length === 0) return res.status(404).json({ success: false, message: `Role '${role_name}' / '${lookupName}' not found.` });
+      
+      if (roleLookup.rows.length === 0) {
+        return res.status(404).json({ success: false, message: `Role '${role_name}' not found.` });
+      }
       role_id = roleLookup.rows[0].id;
     }
 
@@ -79,28 +82,33 @@ exports.inviteUser = async (req, res) => {
 
     // 🔒 SECURITY: Role Escalation Protection
     const roleCheck = await pool.query("SELECT name FROM roles WHERE id = $1", [role_id]);
-    const targetRoleName = roleCheck.rows[0]?.name;
+    if (roleCheck.rows.length === 0) return res.status(404).json({ success: false, message: "Role not found" });
+    
+    const targetRoleName = roleCheck.rows[0].name;
 
-    if (req.user.role !== 'SUPER_ADMIN' && targetRoleName === 'SUPER_ADMIN') {
+    if (req.user.role !== 'SUPER_ADMIN' && targetRoleName.toUpperCase().includes('SUPER')) {
       return res.status(403).json({
         success: false,
-        message: "Security Violation: Only a Super Admin can invite another Super Admin. As a Tenant Admin, you can invite other Tenant Admins or Operators."
+        message: "Security Violation: Unauthorized role escalation."
       });
     }
 
-    const scopeType = (merchant_id && merchant_id !== finalTenantId) ? 'merchant' : 'tenant';
+    const scopeType = (merchant_id) ? 'merchant' : 'tenant';
     const finalMerchantId = (scopeType === 'merchant') ? merchant_id : null;
     const scopeId = finalMerchantId || finalTenantId;
 
-    // Check if user already exists
-    const existingUser = await pool.query("SELECT id FROM users WHERE email = $1 AND tenant_id = $2", [email, finalTenantId]);
+    // --- 🛡️ FIXED EXISTING USER CHECK (Handles NULL tenants correctly) ---
+    const existingUser = await pool.query(
+        "SELECT id FROM users WHERE email = $1 AND (tenant_id = $2 OR (tenant_id IS NULL AND $2 IS NULL))", 
+        [email, finalTenantId]
+    );
     if (existingUser.rows.length > 0) return res.status(400).json({ message: "This user is already a member of this tenant." });
 
     const rawToken = crypto.randomBytes(32).toString('hex');
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
     const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000);
 
-    // Insert Invitation (Updated for Frontend spec)
+    // Insert Invitation
     const result = await pool.query(
       `INSERT INTO user_invitations 
        (tenant_id, merchant_id, email, role_id, scope_type, scope_id, token_hash, expires_at, created_by)
@@ -111,10 +119,9 @@ exports.inviteUser = async (req, res) => {
 
     const inviteId = result.rows[0].id;
 
-    // Email logic (Dynamic URL support)
+    // Email logic
     let inviteLink;
     if (web_app_url) {
-      // Append token to custom frontend URL
       const separator = web_app_url.includes('?') ? '&' : '?';
       inviteLink = `${web_app_url}${separator}token=${rawToken}`;
     } else {
@@ -122,10 +129,20 @@ exports.inviteUser = async (req, res) => {
       inviteLink = `${frontendUrl}/register?token=${rawToken}`;
     }
 
-    await sendInviteEmail(email, inviteLink, {
-      companyName: req.body.company_name || "Enterprise TMS",
-      roleName: role_name || "Team Member"
-    });
+    try {
+        await sendInviteEmail(email, inviteLink, {
+          companyName: req.body.company_name || "Enterprise TMS",
+          roleName: role_name || targetRoleName
+        });
+    } catch (emailErr) {
+        console.error("📧 EMAIL_SEND_FAILURE:", emailErr.message);
+        // Note: We don't fail the whole request if the email fails, but we inform the user
+        return res.status(201).json({
+          success: true,
+          invite_token: rawToken,
+          message: `Invitation created, but email delivery failed. Link: ${inviteLink}`
+        });
+    }
 
     await logAudit(finalTenantId, req.user.id, "user.invite", "USER_INVITATION", inviteId, { email, scopeType });
 
@@ -137,8 +154,16 @@ exports.inviteUser = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("INVITE_ERROR:", error);
-    res.status(500).json({ success: false, message: "Server error during invitation" });
+    console.error("INVITE_ERROR:", {
+        message: error.message,
+        stack: error.stack,
+        body: req.body
+    });
+    res.status(500).json({ 
+        success: false, 
+        message: "Server error during invitation",
+        detail: process.env.NODE_ENV === 'development' ? error.message : undefined 
+    });
   }
 };
 

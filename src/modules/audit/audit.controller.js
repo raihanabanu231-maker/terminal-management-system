@@ -167,18 +167,55 @@ exports.receiveDeviceLogs = async (req, res) => {
 exports.toggleAuditLogging = async (req, res) => {
     const { enabled, target_merchant_id } = req.body;
     const { tenant_id, role, id: userId } = req.user;
-    if (typeof enabled !== "boolean") return res.status(400).json({ success: false, message: "Boolean 'enabled' is required" });
+
+    if (typeof enabled !== "boolean") {
+        return res.status(400).json({ success: false, message: "Boolean 'enabled' is required" });
+    }
+
     try {
+        const statusText = enabled ? "enabled" : "disabled";
+
         if (target_merchant_id) {
-            await pool.query("UPDATE merchants SET audit_logging_enabled = $1 WHERE id = $2 AND tenant_id = $3", [enabled, target_merchant_id, tenant_id]);
+            // Toggle for specific merchant
+            const result = await pool.query(
+                "UPDATE merchants SET audit_logging_enabled = $1 WHERE id = $2 AND tenant_id = $3 RETURNING id",
+                [enabled, target_merchant_id, tenant_id]
+            );
+            
+            if (result.rowCount === 0) {
+                return res.status(404).json({ success: false, message: "Merchant not found in your tenant" });
+            }
+
             await logAudit(tenant_id, userId, "MERCHANT_AUDIT_TOGGLED", "MERCHANT", target_merchant_id, { enabled });
+            
+            return res.json({ 
+                success: true, 
+                message: `Audit logging ${statusText} successfully.` 
+            });
         } else {
-            if (role !== "TENANT_ADMIN" && role !== "SUPER_ADMIN") return res.status(403).json({ success: false, message: "Unauthorized" });
-            await pool.query("UPDATE tenants SET audit_logging_enabled = $1 WHERE id = $2", [enabled, tenant_id]);
+            // Toggle for root tenant
+            if (role !== "TENANT_ADMIN" && role !== "SUPER_ADMIN") {
+                return res.status(403).json({ success: false, message: "Unauthorized: Root Audit configuration requires Tenant Admin privileges" });
+            }
+
+            const result = await pool.query(
+                "UPDATE tenants SET audit_logging_enabled = $1 WHERE id = $2 RETURNING id",
+                [enabled, tenant_id]
+            );
+
+            if (result.rowCount === 0) {
+                return res.status(404).json({ success: false, message: "Tenant not found" });
+            }
+
             await logAudit(tenant_id, userId, "TENANT_AUDIT_TOGGLED", "TENANT", tenant_id, { enabled });
+            
+            return res.json({ 
+                success: true, 
+                message: `Audit logging ${statusText} successfully.` 
+            });
         }
-        res.json({ success: true, message: `Audit logging updated successfully.` });
     } catch (error) {
+        console.error("ToggleAuditLogging Error:", error);
         res.status(500).json({ success: false, message: "Server error" });
     }
 };
