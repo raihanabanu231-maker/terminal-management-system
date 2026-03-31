@@ -1,85 +1,89 @@
-const Brevo = require('@getbrevo/brevo');
+const axios = require('axios');
 
 /**
- * Sends an invitation email to a new user via Brevo Transactional Email service.
- * Standardizes on the modern @getbrevo/brevo SDK with robust initialization.
+ * Sends an invitation email using the Brevo SMTP REST API (Axios).
+ * Direct REST usage is more stable in cloud environments like Render 
+ * compared to SDK wrappers which can have initialization conflicts.
  */
 exports.sendInviteEmail = async (toEmail, inviteLink, details = {}) => {
   const { roleName, companyName } = details;
 
-  // 1. Pre-flight check for environment variables
+  // 1. Validation
   if (!process.env.BREVO_API_KEY || !process.env.SENDER_EMAIL) {
-    console.error("⚠️ EMAIL_FAIL: BREVO_API_KEY or SENDER_EMAIL is not configured.");
-    throw new Error("Brevo Email Service is not configured on this server.");
+    console.error("⚠️ EMAIL_CONFIGURATION_MISSING: BREVO_API_KEY or SENDER_EMAIL is not set.");
+    throw new Error("Email service not configured.");
   }
 
-  // 2. Modern Brevo Initialization (Safe for newer SDK versions)
-  const apiInstance = new Brevo.TransactionalEmailsApi();
-  apiInstance.setApiKey(Brevo.TransactionalEmailsApiApiKeys.apiKey, process.env.BREVO_API_KEY);
-
-  console.log(`📧 Attempting to send invitation to: ${toEmail}`);
+  console.log(`📧 Sending invitation via REST API to: ${toEmail}`);
 
   try {
-    const sendSmtpEmail = new Brevo.SendSmtpEmail();
+    const response = await axios.post(
+      'https://api.brevo.com/v3/smtp/email',
+      {
+        sender: { 
+          name: "TMS Admin", 
+          email: process.env.SENDER_EMAIL 
+        },
+        to: [
+          { email: toEmail }
+        ],
+        subject: `Invitation to join ${companyName || 'TMS Platform'}`,
+        htmlContent: `
+          <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #eee; padding: 30px; border-radius: 12px; background-color: #fdfdfd;">
+            <div style="text-align: center; border-bottom: 2px solid #4CAF50; padding-bottom: 15px; margin-bottom: 20px;">
+              <h1 style="color: #4CAF50; margin: 0;">ATPL TMS Invitation</h1>
+            </div>
+            
+            <p>Hello,</p>
+            <p>You have been invited to join <strong>${companyName || 'our organization'}</strong> on the Terminal Management System.</p>
+            
+            <div style="background-color: #f4f4f4; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 5px solid #4CAF50;">
+              <p style="margin: 0;"><strong>Assigned Role:</strong> ${roleName || 'Team Member'}</p>
+            </div>
 
-    sendSmtpEmail.subject = `Invitation to join ${companyName || 'TMS Platform'}`;
-    sendSmtpEmail.htmlContent = `
-        <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #ddd; padding: 25px; border-radius: 12px; background-color: #ffffff;">
-          <div style="text-align: center; margin-bottom: 20px;">
-            <h1 style="color: #4CAF50; margin: 0;">Welcome to ATPL TMS</h1>
-            <p style="color: #666; font-size: 0.9em; margin-top: 5px;">Unified Terminal Management System</p>
+            <p>Please click the button below to secure your account and access the dashboard:</p>
+            
+            <div style="text-align: center; margin: 35px 0;">
+              <a href="${inviteLink}" 
+                 style="background-color: #4CAF50; color: white; padding: 14px 28px; text-decoration: none; font-weight: bold; border-radius: 6px; display: inline-block; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                 Finalize Account Setup
+              </a>
+            </div>
+
+            <p style="color: #777; font-size: 0.85em;">This link is valid for **72 hours**. If you didn't expect this invitation, you can ignore this email safely.</p>
+            
+            <hr style="border: 0; border-top: 1px solid #eee; margin: 30px 0;" />
+            <p style="font-size: 11px; color: #aaa; text-align: center;">Sent securely via ATPL Group • Terminal Management System</p>
           </div>
-          
-          <p>Hello,</p>
-          <p>You have been formally invited to join the <strong>${companyName || 'TMS Organization'}</strong> on our platform.</p>
-          
-          <div style="background-color: #f9f9f9; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #4CAF50;">
-            <p style="margin: 5px 0;"><strong>Role:</strong> ${roleName || 'Team Member'}</p>
-            <p style="margin: 5px 0;"><strong>Company:</strong> ${companyName || 'Enterprise TMS'}</p>
-          </div>
+        `
+      },
+      {
+        headers: {
+          'api-key': process.env.BREVO_API_KEY,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        timeout: 10000 // 10 second timeout for responsiveness
+      }
+    );
 
-          <p>To finalize your account setup and access the dashboard, please click the button below:</p>
-          
-          <div style="text-align: center; margin: 35px 0;">
-            <a href="${inviteLink}" 
-               style="background-color: #4CAF50; color: #ffffff; padding: 14px 30px; text-decoration: none; font-weight: bold; border-radius: 8px; display: inline-block; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-               Complete My Registration
-            </a>
-          </div>
-
-          <p style="font-size: 0.85em; color: #888;">Note: This secure link will remain valid for **72 hours**. If you did not expect this request, please ignore this email.</p>
-          
-          <hr style="border: 0; border-top: 1px solid #eee; margin: 25px 0;" />
-          <p style="font-size: 11px; color: #aaa; text-align: center;">Sent securely via Terminal Management System (TMS) • ATPL Group</p>
-        </div>
-      `;
-
-    // 3. Sender Verification: Must be a verified email in Brevo
-    sendSmtpEmail.sender = { name: "TMS Admin", email: process.env.SENDER_EMAIL };
-    sendSmtpEmail.to = [{ email: toEmail }];
-
-    // 4. Send Email
-    const result = await apiInstance.sendTransacEmail(sendSmtpEmail);
-    console.log(`✅ Professional Invite Sent. MessageId: ${result.messageId}`);
-    
-    // Check for success status in response (result.response.statusCode if available)
-    return result;
+    console.log(`✅ Professional Invite Sent. MessageId: ${response.data.messageId}`);
+    return response.data;
 
   } catch (error) {
-    // Extract the precise error from the response body if available
-    let errorBody = error.message;
-    if (error.response && error.response.body) {
-      errorBody = JSON.stringify(error.response.body);
-    }
+    // Standardize error reporting from Axios
+    const errorCode = error.response ? error.response.status : 'TIMEOUT/NETWORK';
+    const errorData = error.response ? error.response.data : error.message;
     
-    console.error("❌ BREVO_SERVICE_ERROR:", errorBody);
+    console.error(`❌ BREVO_REST_FAILURE [${errorCode}]:`, JSON.stringify(errorData));
 
-    if (errorBody.includes("unauthorized")) {
-      throw new Error("Brevo Error: Invalid API Key. Please verify BREVO_API_KEY.");
-    } else if (errorBody.includes("invalid_sender")) {
-      throw new Error(`Brevo Error: Sender email (${process.env.SENDER_EMAIL}) is not authorized/verified in your Brevo account.`);
+    // Specific error mapping for easier troubleshooting
+    if (errorCode === 401) {
+      throw new Error("Invalid Brevo API Key. Please update BREVO_API_KEY.");
+    } else if (errorCode === 400 && JSON.stringify(errorData).includes("sender")) {
+      throw new Error(`The sender email (${process.env.SENDER_EMAIL}) is not verified in Brevo.`);
     } else {
-      throw new Error(`Email delivery failed: ${errorBody}`);
+      throw new Error(`Email delivery failed: ${JSON.stringify(errorData)}`);
     }
   }
 };

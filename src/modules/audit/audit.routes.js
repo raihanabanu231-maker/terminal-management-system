@@ -4,7 +4,8 @@ const {
     getAuditLogs, 
     getDeviceAuditLogs, 
     toggleAuditLogging, 
-    receiveDeviceLogs 
+    receiveDeviceLogs, 
+    getAuditPolicy 
 } = require("./audit.controller");
 const { verifyToken } = require("../../middleware/auth.middleware");
 const { authorizeRoles } = require("../../middleware/role.middleware");
@@ -41,6 +42,14 @@ router.post(
     verifyToken,
     authorizeRoles("DEVICE"),
     receiveDeviceLogs
+);
+
+// 5. Get Audit Policy (Android Device Only)
+router.get(
+    "/policy",
+    verifyToken,
+    authorizeRoles("DEVICE"),
+    getAuditPolicy
 );
 
 module.exports = router;

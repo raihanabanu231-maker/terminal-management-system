@@ -1,6 +1,15 @@
 const pool = require("../../config/db");
 const { logAudit } = require("../../utils/audit");
 
+// --- V7 HELPER: Normalization (Strict Formatting) ---
+const normalizePath = (path) => {
+    if (!path) return "/";
+    let p = path.trim().toLowerCase();
+    if (!p.startsWith("/")) p = "/" + p;
+    if (!p.endsWith("/")) p = p + "/";
+    return p;
+};
+
 /**
  * 1. Retrieve System Audit Logs (Internal/User Actions)
  * GET /api/v1/audit
@@ -166,7 +175,7 @@ exports.receiveDeviceLogs = async (req, res) => {
  */
 exports.toggleAuditLogging = async (req, res) => {
     const { enabled, target_merchant_id } = req.body;
-    const { tenant_id, role, id: userId } = req.user;
+    const { tenant_id, role, id: userId, roles = [] } = req.user;
 
     if (typeof enabled !== "boolean") {
         return res.status(400).json({ success: false, message: "Boolean 'enabled' is required" });
@@ -176,6 +185,32 @@ exports.toggleAuditLogging = async (req, res) => {
         const statusText = enabled ? "enabled" : "disabled";
 
         if (target_merchant_id) {
+            // 🛡️ ROLE VALIDATION: Operator can toggle ONLY at Merchant level within their scope
+            if (role === "OPERATOR") {
+                const merchScope = roles.find(r => r.scope === "merchant");
+                if (!merchScope) {
+                    return res.status(403).json({ success: false, message: "Forbidden: Operator requires internal merchant scope." });
+                }
+                
+                const targetMerchRes = await pool.query("SELECT name_path FROM merchants WHERE id = $1 AND tenant_id = $2", [target_merchant_id, tenant_id]);
+                if (targetMerchRes.rows.length === 0) {
+                    return res.status(404).json({ success: false, message: "Merchant not found." });
+                }
+
+                const userScope = normalizePath(merchScope.scope_path);
+                const targetPath = normalizePath(targetMerchRes.rows[0].name_path);
+
+                if (!targetPath.startsWith(userScope)) {
+                    return res.status(403).json({ success: false, message: "Forbidden: Merchant is outside your assigned scope." });
+                }
+            } else if (role !== "TENANT_ADMIN" && role !== "SUPER_ADMIN") {
+                return res.status(403).json({ success: false, message: "Unauthorized: Audit configuration requires Tenant Admin or Operator privileges" });
+            }
+
+            // Fetch old value for audit trail
+            const oldValRes = await pool.query("SELECT audit_logging_enabled FROM merchants WHERE id = $1", [target_merchant_id]);
+            const oldVal = (oldValRes.rows.length > 0) ? oldValRes.rows[0].audit_logging_enabled : null;
+
             // Toggle for specific merchant
             const result = await pool.query(
                 "UPDATE merchants SET audit_logging_enabled = $1 WHERE id = $2 AND tenant_id = $3 RETURNING id",
@@ -186,17 +221,27 @@ exports.toggleAuditLogging = async (req, res) => {
                 return res.status(404).json({ success: false, message: "Merchant not found in your tenant" });
             }
 
-            await logAudit(tenant_id, userId, "MERCHANT_AUDIT_TOGGLED", "MERCHANT", target_merchant_id, { enabled });
+            await logAudit(tenant_id, userId, "MERCHANT_AUDIT_TOGGLED", "MERCHANT", target_merchant_id, { 
+                actor_role: role,
+                target: "Merchant",
+                old_value: oldVal === null ? "DEFAULT (true)" : oldVal,
+                new_value: enabled,
+                timestamp: new Date().toISOString()
+            });
             
             return res.json({ 
                 success: true, 
-                message: `Audit logging ${statusText} successfully.` 
+                message: `Audit logging ${statusText} successfully for Merchant.` 
             });
         } else {
             // Toggle for root tenant
             if (role !== "TENANT_ADMIN" && role !== "SUPER_ADMIN") {
                 return res.status(403).json({ success: false, message: "Unauthorized: Root Audit configuration requires Tenant Admin privileges" });
             }
+
+            // Fetch old value
+            const oldValRes = await pool.query("SELECT audit_logging_enabled FROM tenants WHERE id = $1", [tenant_id]);
+            const oldVal = (oldValRes.rows.length > 0) ? oldValRes.rows[0].audit_logging_enabled : true;
 
             const result = await pool.query(
                 "UPDATE tenants SET audit_logging_enabled = $1 WHERE id = $2 RETURNING id",
@@ -207,15 +252,58 @@ exports.toggleAuditLogging = async (req, res) => {
                 return res.status(404).json({ success: false, message: "Tenant not found" });
             }
 
-            await logAudit(tenant_id, userId, "TENANT_AUDIT_TOGGLED", "TENANT", tenant_id, { enabled });
+            await logAudit(tenant_id, userId, "TENANT_AUDIT_TOGGLED", "TENANT", tenant_id, { 
+                actor_role: role,
+                target: "Tenant",
+                old_value: oldVal,
+                new_value: enabled,
+                timestamp: new Date().toISOString()
+            });
             
             return res.json({ 
                 success: true, 
-                message: `Audit logging ${statusText} successfully.` 
+                message: `Audit logging ${statusText} successfully for Tenant.` 
             });
         }
     } catch (error) {
         console.error("ToggleAuditLogging Error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
+/**
+ * 5. Get Audit Policy (Android Device Only)
+ * GET /api/v1/audit/policy
+ */
+exports.getAuditPolicy = async (req, res) => {
+    try {
+        const deviceId = req.user.id;
+        
+        const dRes = await pool.query(`
+            SELECT t.audit_logging_enabled as t_audit, m.audit_logging_enabled as m_audit
+            FROM devices d
+            JOIN tenants t ON d.tenant_id = t.id
+            LEFT JOIN merchants m ON d.merchant_id = m.id
+            WHERE d.id = $1
+        `, [deviceId]);
+
+        if (dRes.rows.length === 0) {
+            return res.status(404).json({ success: false, message: "Device not found" });
+        }
+
+        const dev = dRes.rows[0];
+        // IF merchant audit setting exists → use it
+        // ELSE IF tenant audit setting exists → use it
+        // ELSE → true
+        const isEnabled = dev.m_audit !== null ? dev.m_audit : (dev.t_audit !== null ? dev.t_audit : true);
+
+        res.json({
+            success: true,
+            audit_logging_enabled: isEnabled
+        });
+
+    } catch (error) {
+        console.error("GetAuditPolicy Error:", error);
         res.status(500).json({ success: false, message: "Server error" });
     }
 };

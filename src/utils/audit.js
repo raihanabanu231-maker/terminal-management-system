@@ -34,9 +34,20 @@ exports.logAudit = async (tenantId, userId, action, resourceType, resourceId, de
         // 3. Save to System Audit Table (Explicit ID)
         try {
             await pool.query(
-                `INSERT INTO audit_logs (id, tenant_id, tenant_name, user_id, action, resource_type, resource_id, details, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
-                [logId, tenantId, tenantName, userId, action, resourceType, resourceId, details ? JSON.stringify(details) : null]
+                `INSERT INTO audit_logs (id, tenant_id, tenant_name, user_id, action, resource_type, resource_id, new_values, old_values, checksum, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+                [
+                    logId, 
+                    tenantId, 
+                    tenantName, 
+                    userId, 
+                    action, 
+                    resourceType, 
+                    resourceId, 
+                    details ? JSON.stringify(details) : '{}',
+                    details?.old_values ? JSON.stringify(details.old_values) : null,
+                    'tms-safe-' + crypto.randomBytes(4).toString('hex')
+                ]
             );
         } catch (e) { console.error("Audit System Log Insert Fail:", e.message); }
 
