@@ -69,7 +69,7 @@ exports.createMerchant = async (req, res) => {
 
         // --- SECURITY PERMISSIONS CHECK ---
         const merchantRole = req.user.roles?.find(r => r.scope === 'merchant');
-        const isTenantAdmin = req.user.role === 'TENANT_ADMIN' || req.user.roles?.some(r => r.name === 'Tenant Admin' || r.name === 'TENANT_ADMIN');
+        const isTenantAdmin = req.user.role === 'TENANT_ADMIN';
 
         // Level 1: Super Admin -> No Restrictions
         if (req.user.role === 'SUPER_ADMIN') {
