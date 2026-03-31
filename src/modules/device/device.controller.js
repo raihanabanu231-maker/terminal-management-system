@@ -66,11 +66,14 @@ exports.generateEnrollmentToken = async (req, res) => {
         // Also create device record if serial is provided (backward compatible)
         if (serial) {
             await pool.query(
-                `INSERT INTO devices (serial, model, enrollment_token, merchant_id, tenant_id, status)
-                 VALUES ($1, $2, $3, $4, $5, 'pending_onboard')
+                `INSERT INTO devices (serial, model, tenant_id, merchant_id, status, enrollment_token)
+                 VALUES ($1, $2, $3, $4, 'pending_onboard', $5)
                  ON CONFLICT (serial) 
-                 DO UPDATE SET enrollment_token = $3, status = 'pending_onboard'`,
-                [serial, model || 'Standard', tokenHash, merchant_id || null, finalTenantId]
+                 DO UPDATE SET 
+                    model = COALESCE(NULLIF($2, 'Standard'), devices.model),
+                    enrollment_token = $5, 
+                    status = 'pending_onboard'`,
+                [serial, model || 'Standard', finalTenantId, merchant_id || null, tokenHash]
             );
         }
 
@@ -110,6 +113,7 @@ exports.enrollDevice = async (req, res) => {
     // Support both Legacy Serial and Modern Android ID
     const actualToken = token || enrollment_token;
     const actualSerial = serial || serial_number || android_id;
+    const actualModel = device_model || model || 'Standard';
 
     if (!actualToken) {
         return res.status(400).json({ success: false, message: "enrollment_token is required" });
@@ -164,12 +168,19 @@ exports.enrollDevice = async (req, res) => {
             // Create or update device record
             if (actualSerial) {
                 const deviceRes = await pool.query(
-                    `INSERT INTO devices (serial, model, tenant_id, merchant_id, merchant_path, status, device_status)
-                     VALUES ($1, $2, $3, $4, $5, 'active', 'online')
+                    `INSERT INTO devices (serial, model, tenant_id, merchant_id, merchant_path, status, device_status, os_version)
+                     VALUES ($1, $2, $3, $4, $5, 'active', 'online', $6)
                      ON CONFLICT (serial) 
-                     DO UPDATE SET status = 'active', device_status = 'online', merchant_path = EXCLUDED.merchant_path, last_seen = NOW(), deleted_at = NULL
+                     DO UPDATE SET 
+                        status = 'active', 
+                        device_status = 'online', 
+                        model = EXCLUDED.model,
+                        os_version = COALESCE(EXCLUDED.os_version, devices.os_version),
+                        merchant_path = EXCLUDED.merchant_path, 
+                        last_seen = NOW(), 
+                        deleted_at = NULL
                      RETURNING *`,
-                    [actualSerial, device_model || 'Standard', enrollmentRecord.tenant_id, enrollmentRecord.merchant_id, normalizedPath]
+                    [actualSerial, actualModel, enrollmentRecord.tenant_id, enrollmentRecord.merchant_id, normalizedPath, os_version || 'Unknown']
                 );
                 device = deviceRes.rows[0];
 

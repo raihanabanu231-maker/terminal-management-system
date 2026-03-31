@@ -82,6 +82,15 @@ exports.reportTelemetry = async (req, res) => {
             [device_id, reported_at || new Date(), payload || {}]
         );
 
+        // 🎯 AUTO-FIX: If the device model is currently "Standard", and the telemetry payload contains the real model, update it!
+        const reportedModel = payload?.model || payload?.device_model || payload?.brand;
+        if (reportedModel && reportedModel !== 'Standard') {
+            await pool.query(
+                `UPDATE devices SET model = $1 WHERE id = $2 AND model = 'Standard'`,
+                [reportedModel, device_id]
+            );
+        }
+
         res.json({ success: true, message: `Telemetry recorded for device ${device_id}` });
     } catch (error) {
         console.error("Report Telemetry Error:", error);
