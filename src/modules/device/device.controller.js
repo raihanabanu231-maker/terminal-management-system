@@ -6,10 +6,10 @@ const { logAudit } = require("../../utils/audit");
 
 // 1. Generate Enrollment Token (Jayakumar Spec - uses enrollment_tokens table)
 exports.generateEnrollmentToken = async (req, res) => {
-    const { device_profile_id, max_enrollments, expires_in_minutes, serial, android_id, model, tenant_id } = req.body;
+    const { device_profile_id, max_enrollments, expires_in_minutes, serial, model, tenant_id } = req.body;
     let { merchant_id } = req.body;
 
-    const identityToLock = serial || android_id;
+    const identityToLock = serial;
     let finalTenantId = (req.user.role === "SUPER_ADMIN" && tenant_id) ? tenant_id : req.user.tenant_id;
 
     if (merchant_id === "null" || merchant_id === "undefined" || merchant_id === "" || merchant_id === finalTenantId) {
@@ -72,10 +72,10 @@ exports.generateEnrollmentToken = async (req, res) => {
 
 // 2. Enroll Device (Jayakumar Spec)
 exports.enrollDevice = async (req, res) => {
-    const { token, serial, android_id, enrollment_token, serial_number, device_model, os_version, model } = req.body;
+    const { token, serial, enrollment_token, serial_number, device_model, os_version, model } = req.body;
 
     const actualToken = token || enrollment_token;
-    const actualSerial = serial || serial_number || android_id;
+    const actualSerial = serial || serial_number;
     const actualModel = device_model || model || 'Standard';
 
     if (!actualToken) return res.status(400).json({ success: false, message: "enrollment_token is required" });
