@@ -30,26 +30,4 @@ router.post("/test-token", (req, res) => {
     res.json({ token, hash });
 });
 
-// ⚡ EMAIL DIAGNOSTIC ROUTE
-router.get("/diag/email", async (req, res) => {
-    try {
-        const { sendInviteEmail } = require("../../utils/email");
-        await sendInviteEmail("test@example.com", "https://example.com", {
-            roleName: "DIAG_ROLE",
-            companyName: "DIAG_ORG"
-        });
-        res.json({ 
-            success: true, 
-            message: "Email service REST API is functioning correctly.",
-            sender: process.env.SENDER_EMAIL 
-        });
-    } catch (error) {
-        res.status(500).json({ 
-            success: false, 
-            message: "Brevo service error", 
-            details: error.message 
-        });
-    }
-});
-
 module.exports = router;
