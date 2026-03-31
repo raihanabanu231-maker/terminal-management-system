@@ -24,10 +24,10 @@ exports.generateEnrollmentToken = async (req, res) => {
         if (merchant_id) {
             const merchRes = await pool.query("SELECT id, tenant_id FROM merchants WHERE id = $1", [merchant_id]);
             if (merchRes.rows.length === 0) {
-                return res.status(404).json({ success: false, message: "Invalid Target Store: Merchant not found" });
+                return res.status(404).json({ success: false, message: "Store not found" });
             }
             if (req.user.role !== "SUPER_ADMIN" && merchRes.rows[0].tenant_id !== finalTenantId) {
-                return res.status(403).json({ success: false, message: "Unauthorized merchant access" });
+                return res.status(403).json({ success: false, message: "Unauthorized store context" });
             }
             if (req.user.role === "SUPER_ADMIN") finalTenantId = merchRes.rows[0].tenant_id;
         }
@@ -66,7 +66,7 @@ exports.generateEnrollmentToken = async (req, res) => {
         });
     } catch (error) {
         console.error("GENERATE ENROLLMENT TOKEN ERROR:", error);
-        res.status(500).json({ success: false, message: "Server error", detail: error.message });
+        res.status(500).json({ success: false, message: "Server error" });
     }
 };
 
@@ -78,9 +78,7 @@ exports.enrollDevice = async (req, res) => {
     const actualSerial = serial || serial_number || android_id;
     const actualModel = device_model || model || 'Standard';
 
-    if (!actualToken) {
-        return res.status(400).json({ success: false, message: "enrollment_token is required" });
-    }
+    if (!actualToken) return res.status(400).json({ success: false, message: "enrollment_token is required" });
 
     try {
         const tokenHash = crypto.createHash('sha256').update(actualToken).digest('hex');
@@ -98,7 +96,7 @@ exports.enrollDevice = async (req, res) => {
             const incomingSerial = String(actualSerial || "").trim().toLowerCase();
 
             if (enrollmentRecord.serial && storedSerial !== incomingSerial) {
-                return res.status(403).json({ success: false, message: "Security Violation: Serial mismatch" });
+                return res.status(403).json({ success: false, message: "Serial mismatch" });
             }
 
             await pool.query("UPDATE enrollment_tokens SET remaining_enrollments = remaining_enrollments - 1 WHERE id = $1", [enrollmentRecord.id]);
@@ -123,14 +121,15 @@ exports.enrollDevice = async (req, res) => {
                     [actualSerial, actualModel, enrollmentRecord.tenant_id, enrollmentRecord.merchant_id, normalizedPath, os_version || 'Unknown']
                 );
                 device = deviceRes.rows[0];
+                await pool.query("DELETE FROM device_telemetry WHERE device_id = $1", [device.id]);
             }
         } else {
             const result = await pool.query("SELECT * FROM devices WHERE enrollment_token = $1 AND status = 'pending_onboard'", [tokenHash]);
-            if (result.rows.length === 0) return res.status(400).json({ success: false, message: "Invalid token" });
+            if (result.rows.length === 0) return res.status(400).json({ success: false, message: "Invalid enrollment" });
             device = result.rows[0];
         }
 
-        if (!device) return res.status(400).json({ success: false, message: "Enrollment failed" });
+        if (!device) return res.status(400).json({ success: false, message: "No device context" });
 
         const access_token = jwt.sign({ id: device.id, role: "DEVICE", tenant_id: device.tenant_id, type: "access" }, process.env.JWT_SECRET, { expiresIn: '1d' });
         const refresh_token = jwt.sign({ id: device.id, role: "DEVICE", tenant_id: device.tenant_id, type: "refresh" }, process.env.JWT_SECRET, { expiresIn: '30d' });
@@ -139,127 +138,15 @@ exports.enrollDevice = async (req, res) => {
         const refreshTokenHash = crypto.createHash('sha256').update(refresh_token).digest('hex');
 
         await pool.query(
-            `UPDATE devices SET status = 'active', device_status = 'online', enrollment_token = NULL, 
-             device_token_hash = $1, device_refresh_token_hash = $2, token_issued_at = NOW(), last_seen = NOW() WHERE id = $3`,
+            `UPDATE devices SET status = 'active', enrollment_token = NULL, device_token_hash = $1, device_refresh_token_hash = $2, token_issued_at = NOW(), last_seen = NOW() WHERE id = $3`,
             [accessTokenHash, refreshTokenHash, device.id]
         );
 
         await logAudit(device.tenant_id, null, "DEVICE_ENROLLED", "DEVICE", device.id, { serial: actualSerial });
 
-        res.json({
-            success: true,
-            message: "Device Enrolled Successfully",
-            device_id: device.id,
-            access_token: access_token,
-            refresh_token: refresh_token,
-            heartbeat_interval: 30
-        });
-
+        res.json({ success: true, message: "Enrolled", device_id: device.id, access_token, refresh_token, heartbeat_interval: 30 });
     } catch (error) {
-        console.error("ENROLL DEVICE ERROR:", error);
-        res.status(500).json({ success: false, message: "Server error" });
-    }
-};
-
-// 3. Remote Command
-exports.sendDeviceCommand = async (req, res) => {
-    const { deviceId } = req.params;
-    const { type, payload } = req.body;
-
-    const ALLOWED_COMMANDS = ["REBOOT", "SHUTDOWN", "SYNC", "WIPE", "TOGGLE_WIFI", "TOGGLE_BLUETOOTH", "INSTALL_ARTIFACT"];
-    if (!type || !ALLOWED_COMMANDS.includes(type)) return res.status(400).json({ success: false, message: "Invalid command" });
-
-    try {
-        const deviceRes = await pool.query("SELECT id, tenant_id FROM devices WHERE id = $1", [deviceId]);
-        if (deviceRes.rows.length === 0) return res.status(404).json({ success: false, message: "Device not found" });
-
-        const device = deviceRes.rows[0];
-        const cmdRes = await pool.query(
-            `INSERT INTO commands (device_id, type, payload, status, created_by, expires_at)
-             VALUES ($1, $2, $3, 'queued', $4, NOW() + INTERVAL '24 hours') RETURNING id`,
-            [deviceId, type, payload || {}, req.user.id]
-        );
-
-        const commandId = cmdRes.rows[0].id;
-        const state = payload?.state ? String(payload.state).toUpperCase() : "TOGGLE";
-        
-        await logAudit(device.tenant_id, req.user.id, `DEVICE_${type}_INITIATED`, "DEVICE", deviceId, { 
-            type, command_id: commandId, message: `${type} command sent: State ${state}.`
-        });
-
-        const { sendCommand } = require("../../gateway/socket.gateway");
-        const success = sendCommand(deviceId, { type: "command", id: commandId, cmd: type, payload: payload });
-
-        if (success) {
-            await pool.query("UPDATE commands SET status = 'sent', sent_at = NOW() WHERE id = $1", [commandId]);
-            res.json({ success: true, command_id: commandId, status: "sent" });
-        } else {
-            res.json({ success: true, message: "Queued (Device Offline)", command_id: commandId, status: "queued" });
-        }
-
-    } catch (error) {
-        res.status(500).json({ success: false, message: "Server error" });
-    }
-};
-
-// 4. Device Command ACK
-exports.ackCommand = async (req, res) => {
-    const { commandId } = req.params;
-    const { success, error_message, result_data, execution_time_ms } = req.body;
-    const deviceId = req.user.id;
-
-    try {
-        const cmdRes = await pool.query("SELECT * FROM commands WHERE id = $1 AND device_id = $2", [commandId, deviceId]);
-        if (cmdRes.rows.length === 0) return res.status(404).json({ success: false, message: "Command not found" });
-
-        const cmd = cmdRes.rows[0];
-
-        if (success) {
-            await pool.query(
-                `UPDATE commands SET status = 'completed', acked_at = NOW(), execution_time_ms = $1,
-                 payload = payload || $2::jsonb WHERE id = $3`,
-                [execution_time_ms || null, JSON.stringify({ result_data }), commandId]
-            );
-
-            const deviceCheck = await pool.query("SELECT tenant_id FROM devices WHERE id = $1", [deviceId]);
-            const tenantId = deviceCheck.rows[0]?.tenant_id;
-            
-            await logAudit(tenantId || null, null, `COMMAND_${cmd.type}_SUCCESS`, "DEVICE", deviceId, { 
-                command_id: commandId, message: `Command ${cmd.type} completed successfully.`
-            });
-        } else {
-            await pool.query("UPDATE commands SET status = 'failed', acked_at = NOW() WHERE id = $1", [commandId]);
-            const deviceCheck = await pool.query("SELECT tenant_id FROM devices WHERE id = $1", [deviceId]);
-            await logAudit(deviceCheck.rows[0]?.tenant_id || null, null, `COMMAND_${cmd.type}_FAILURE`, "DEVICE", deviceId, { error_message });
-        }
-
-        res.json({ success: true, message: "ACK'd" });
-    } catch (error) {
-        res.status(500).json({ success: false, message: "Server error" });
-    }
-};
-
-// 5. Get Devices
-exports.getDevices = async (req, res) => {
-    try {
-        const result = await pool.query(
-            `SELECT d.*, m.name as merchant_name, t.name as tenant_name FROM devices d 
-             JOIN tenants t ON d.tenant_id = t.id 
-             LEFT JOIN merchants m ON d.merchant_id = m.id WHERE d.deleted_at IS NULL`
-        );
-        res.json({ success: true, data: result.rows });
-    } catch (error) {
-        res.status(500).json({ message: "Server error" });
-    }
-};
-
-// 6. Receive Heartbeat
-exports.receiveHeartbeat = async (req, res) => {
-    const deviceId = req.user.id;
-    try {
-        await pool.query("UPDATE devices SET last_seen = NOW(), status = 'active' WHERE id = $1", [deviceId]);
-        res.json({ success: true, message: "Heartbeat acknowledged" });
-    } catch (error) {
+        console.error(error);
         res.status(500).json({ success: false, message: "Server error" });
     }
 };
@@ -273,12 +160,102 @@ exports.startStatusJob = () => {
     }, 60000);
 };
 
-exports.deleteDevice = async (req, res) => {
-    const { id } = req.params;
+// ---------------------------------------------------------
+// RESTORING ALL MISSING EXPORTS FOR ROUTE STABILITY
+// ---------------------------------------------------------
+
+exports.refreshDeviceToken = async (req, res) => {
+    const { refresh_token } = req.body;
+    if (!refresh_token) return res.status(400).json({ success: false, message: "token required" });
     try {
-        await pool.query("UPDATE devices SET deleted_at = NOW(), status = 'deleted' WHERE id = $1", [id]);
-        res.json({ success: true, message: "Soft-deleted" });
-    } catch (error) {
-        res.status(500).json({ success: false, message: "Server error" });
-    }
+        const decoded = jwt.verify(refresh_token, process.env.JWT_SECRET);
+        const hash = crypto.createHash('sha256').update(refresh_token).digest('hex');
+        const d = await pool.query("SELECT * FROM devices WHERE id = $1 AND device_refresh_token_hash = $2", [decoded.id, hash]);
+        if (d.rows.length === 0) return res.status(401).json({ success: false });
+        const access = jwt.sign({ id: d.rows[0].id, role: "DEVICE", tenant_id: d.rows[0].tenant_id, type: "access" }, process.env.JWT_SECRET, { expiresIn: '1d' });
+        const refresh = jwt.sign({ id: d.rows[0].id, role: "DEVICE", tenant_id: d.rows[0].tenant_id, type: "refresh" }, process.env.JWT_SECRET, { expiresIn: '30d' });
+        await pool.query("UPDATE devices SET device_token_hash = $1, device_refresh_token_hash = $2 WHERE id = $3", [crypto.createHash('sha256').update(access).digest('hex'), crypto.createHash('sha256').update(refresh).digest('hex'), d.rows[0].id]);
+        res.json({ success: true, access_token: access, refresh_token: refresh });
+    } catch (err) { res.status(401).json({ success: false }); }
+};
+
+exports.sendDeviceCommand = async (req, res) => {
+    const { deviceId } = req.params;
+    const { type, payload } = req.body;
+    try {
+        const dRes = await pool.query("SELECT id, tenant_id FROM devices WHERE id = $1", [deviceId]);
+        if (dRes.rows.length === 0) return res.status(404).json({ message: "Not found" });
+        const cmdRes = await pool.query("INSERT INTO commands (device_id, type, payload, status, created_by, expires_at) VALUES ($1,$2,$3,'queued',$4, NOW() + INTERVAL '24 hours') RETURNING id", [deviceId, type, payload || {}, req.user.id]);
+        const { sendCommand } = require("../../gateway/socket.gateway");
+        const success = sendCommand(deviceId, { type: "command", id: cmdRes.rows[0].id, cmd: type, payload });
+        if (success) await pool.query("UPDATE commands SET status = 'sent', sent_at = NOW() WHERE id = $1", [cmdRes.rows[0].id]);
+        res.json({ success: true, command_id: cmdRes.rows[0].id });
+    } catch (err) { res.status(500).json({ success: false }); }
+};
+
+exports.getPendingCommands = async (req, res) => {
+    try {
+        const r = await pool.query("SELECT id, type, payload FROM commands WHERE device_id = $1 AND status = 'queued'", [req.user.id]);
+        res.json({ success: true, commands: r.rows });
+    } catch (err) { res.status(500).json({ success: false }); }
+};
+
+exports.ackCommand = async (req, res) => {
+    const { commandId } = req.params;
+    const { success, result_data } = req.body;
+    try {
+        const status = success ? 'completed' : 'failed';
+        await pool.query("UPDATE commands SET status = $1, acked_at = NOW(), payload = payload || $2::jsonb WHERE id = $3", [status, JSON.stringify({ result_data }), commandId]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false }); }
+};
+
+exports.getDevices = async (req, res) => {
+    try {
+        const r = await pool.query("SELECT d.*, t.name as tenant_name FROM devices d JOIN tenants t ON d.tenant_id = t.id WHERE d.deleted_at IS NULL");
+        res.json({ success: true, data: r.rows });
+    } catch (err) { res.status(500).json({ success: false }); }
+};
+
+exports.getDeviceById = async (req, res) => {
+    try {
+        const r = await pool.query("SELECT * FROM devices WHERE id = $1", [req.params.id]);
+        res.json({ success: true, data: r.rows[0] });
+    } catch (err) { res.status(500).json({ success: false }); }
+};
+
+exports.getCommandStatus = async (req, res) => {
+    try {
+        const r = await pool.query("SELECT * FROM commands WHERE id = $1", [req.params.commandId]);
+        res.json({ success: true, command: r.rows[0] });
+    } catch (err) { res.status(500).json({ success: false }); }
+};
+
+exports.updateDevice = async (req, res) => {
+    try {
+        const { model, merchant_id } = req.body;
+        await pool.query("UPDATE devices SET model = $1, merchant_id = $2 WHERE id = $3", [model, merchant_id, req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false }); }
+};
+
+exports.deleteDevice = async (req, res) => {
+    try {
+        await pool.query("UPDATE devices SET deleted_at = NOW(), status = 'deleted' WHERE id = $1", [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false }); }
+};
+
+exports.receiveHeartbeat = async (req, res) => {
+    try {
+        await pool.query("UPDATE devices SET last_seen = NOW(), status = 'active' WHERE id = $1", [req.user.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false }); }
+};
+
+exports.checkEnrollmentStatus = async (req, res) => {
+    try {
+        const r = await pool.query("SELECT * FROM enrollment_tokens WHERE id = $1", [req.params.id]);
+        res.json({ success: true, data: r.rows[0] });
+    } catch (err) { res.status(500).json({ success: false }); }
 };
