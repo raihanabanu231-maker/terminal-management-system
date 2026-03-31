@@ -212,12 +212,20 @@ exports.sendDeviceCommand = async (req, res) => {
     try {
         const dRes = await pool.query("SELECT id, tenant_id FROM devices WHERE id = $1", [deviceId]);
         if (dRes.rows.length === 0) return res.status(404).json({ message: "Not found" });
+        
+        const tenantId = dRes.rows[0].tenant_id;
         const cmdRes = await pool.query("INSERT INTO commands (device_id, type, payload, status, created_by, expires_at) VALUES ($1,$2,$3,'queued',$4, NOW() + INTERVAL '24 hours') RETURNING id", [deviceId, type, payload || {}, req.user.id]);
+        
+        await logAudit(tenantId, req.user.id, `${type}_INITIATED`, 'DEVICE', deviceId, { action: type, payload });
+
         const { sendCommand } = require("../../gateway/socket.gateway");
         const success = sendCommand(deviceId, { type: "command", id: cmdRes.rows[0].id, cmd: type, payload });
         if (success) await pool.query("UPDATE commands SET status = 'sent', sent_at = NOW() WHERE id = $1", [cmdRes.rows[0].id]);
         res.json({ success: true, command_id: cmdRes.rows[0].id });
-    } catch (err) { res.status(500).json({ success: false }); }
+    } catch (err) { 
+        console.error("sendDeviceCommand Error:", err);
+        res.status(500).json({ success: false }); 
+    }
 };
 
 exports.getPendingCommands = async (req, res) => {
@@ -230,11 +238,22 @@ exports.getPendingCommands = async (req, res) => {
 exports.ackCommand = async (req, res) => {
     const { commandId } = req.params;
     const { success, result_data } = req.body;
+    const deviceId = req.user.id;
     try {
         const status = success ? 'completed' : 'failed';
         await pool.query("UPDATE commands SET status = $1, acked_at = NOW(), payload = payload || $2::jsonb WHERE id = $3", [status, JSON.stringify({ result_data }), commandId]);
+        
+        const cmdRes = await pool.query("SELECT c.type, d.tenant_id FROM commands c JOIN devices d ON c.device_id = d.id WHERE c.id = $1", [commandId]);
+        if (cmdRes.rows.length > 0) {
+            const { type, tenant_id } = cmdRes.rows[0];
+            await logAudit(tenant_id, null, `${type}_${status.toUpperCase()}`, 'DEVICE', deviceId, { result: result_data });
+        }
+
         res.json({ success: true });
-    } catch (err) { res.status(500).json({ success: false }); }
+    } catch (err) { 
+        console.error("ackCommand Error:", err);
+        res.status(500).json({ success: false }); 
+    }
 };
 
 exports.getDevices = async (req, res) => {
