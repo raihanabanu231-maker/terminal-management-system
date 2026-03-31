@@ -72,7 +72,7 @@ exports.getAuditLogs = async (req, res) => {
 exports.getDeviceAuditLogs = async (req, res) => {
     try {
         const { role: userRole, tenant_id: userTenantId } = req.user;
-        const { limit = 50, offset = 0, device_id } = req.query;
+        const { limit = 50, offset = 0, device_id, merchant_id, event_type } = req.query;
 
         const roles = req.user.roles || [];
         let userScopePath = "/";
@@ -99,9 +99,18 @@ exports.getDeviceAuditLogs = async (req, res) => {
             query += ` AND (COALESCE(dal.merchant_path, '/') || '/') ILIKE $${params.length} || '%'`;
         }
 
+        // --- NEW FILTERS ---
         if (device_id) {
             params.push(device_id);
             query += ` AND dal.device_id = $${params.length}`;
+        }
+        if (merchant_id) {
+            params.push(merchant_id);
+            query += ` AND dal.merchant_id = $${params.length}`;
+        }
+        if (event_type) {
+            params.push(event_type);
+            query += ` AND dal.event_type = $${params.length}`;
         }
 
         const fLimit = parseInt(limit) || 50;
@@ -122,7 +131,9 @@ exports.getDeviceAuditLogs = async (req, res) => {
  * 3. Receive Device Audit Logs (From Android)
  */
 exports.receiveDeviceLogs = async (req, res) => {
-    const { logs } = req.body;
+    // FLEXIBILITY: Detect if req.body is a raw array OR an object with a 'logs' key
+    let logs = Array.isArray(req.body) ? req.body : req.body.logs;
+    
     const deviceId = req.user.id;
     const tenantId = req.user.tenant_id;
 

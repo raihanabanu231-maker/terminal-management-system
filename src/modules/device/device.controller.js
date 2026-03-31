@@ -209,22 +209,50 @@ exports.refreshDeviceToken = async (req, res) => {
 exports.sendDeviceCommand = async (req, res) => {
     const { deviceId } = req.params;
     const { type, payload } = req.body;
+    const { role: userRole, tenant_id: userTenantId, roles = [] } = req.user;
+
     try {
-        const dRes = await pool.query("SELECT id, tenant_id FROM devices WHERE id = $1", [deviceId]);
-        if (dRes.rows.length === 0) return res.status(404).json({ message: "Not found" });
+        // 🛡️ SCOPE CHECK: Ensure user has authority over this device
+        let scopeQuery = "SELECT id, tenant_id, merchant_path FROM devices WHERE id = $1 AND deleted_at IS NULL";
+        const scopeParams = [deviceId];
+
+        if (userRole !== "SUPER_ADMIN") {
+            scopeParams.push(userTenantId);
+            scopeQuery += ` AND tenant_id = $${scopeParams.length}`;
+        }
+
+        const dRes = await pool.query(scopeQuery, scopeParams);
+        if (dRes.rows.length === 0) return res.status(404).json({ success: false, message: "Device not found or unauthorized" });
         
-        const tenantId = dRes.rows[0].tenant_id;
-        const cmdRes = await pool.query("INSERT INTO commands (device_id, type, payload, status, created_by, expires_at) VALUES ($1,$2,$3,'queued',$4, NOW() + INTERVAL '24 hours') RETURNING id", [deviceId, type, payload || {}, req.user.id]);
+        const device = dRes.rows[0];
+
+        // 🛡️ SUB-LOGIC: Check Merchant Path if Operator
+        if (userRole === "OPERATOR") {
+            const merchScope = roles.find(r => r.scope === "merchant");
+            if (merchScope) {
+                const userPath = (merchScope.scope_path || "/").toLowerCase().trim().replace(/\/$/, '') + '/';
+                const devicePath = (device.merchant_path || "/").toLowerCase().trim().replace(/\/$/, '') + '/';
+                if (!devicePath.startsWith(userPath)) {
+                    return res.status(403).json({ success: false, message: "Forbidden: Device is outside your assigned branch scope." });
+                }
+            }
+        }
+
+        const cmdRes = await pool.query(
+            "INSERT INTO commands (device_id, type, payload, status, created_by, expires_at) VALUES ($1,$2,$3,'queued',$4, NOW() + INTERVAL '24 hours') RETURNING id", 
+            [deviceId, type, payload || {}, req.user.id]
+        );
         
-        await logAudit(tenantId, req.user.id, `${type}_INITIATED`, 'DEVICE', deviceId, { action: type, payload });
+        await logAudit(device.tenant_id, req.user.id, `${type}_INITIATED`, 'DEVICE', deviceId, { action: type, payload });
 
         const { sendCommand } = require("../../gateway/socket.gateway");
         const success = sendCommand(deviceId, { type: "command", id: cmdRes.rows[0].id, cmd: type, payload });
         if (success) await pool.query("UPDATE commands SET status = 'sent', sent_at = NOW() WHERE id = $1", [cmdRes.rows[0].id]);
+        
         res.json({ success: true, command_id: cmdRes.rows[0].id });
     } catch (err) { 
         console.error("sendDeviceCommand Error:", err);
-        res.status(500).json({ success: false }); 
+        res.status(500).json({ success: false, message: "Internal server error" }); 
     }
 };
 
@@ -258,46 +286,170 @@ exports.ackCommand = async (req, res) => {
 
 exports.getDevices = async (req, res) => {
     try {
-        const r = await pool.query("SELECT * FROM devices WHERE deleted_at IS NULL ORDER BY created_at DESC");
+        const { role: userRole, tenant_id: userTenantId, roles = [] } = req.user;
+        const { status, merchant_id } = req.query;
+
+        let userScopePath = "/";
+        if (userRole !== "SUPER_ADMIN") {
+            const merchantRoles = roles.filter(r => r.scope === "merchant");
+            if (merchantRoles.length > 0) userScopePath = merchantRoles[0].scope_path || "/";
+        }
+
+        let query = "SELECT * FROM devices WHERE deleted_at IS NULL";
+        const params = [];
+
+        if (userRole !== "SUPER_ADMIN") {
+            params.push(userTenantId);
+            query += ` AND tenant_id = $${params.length}`;
+        }
+
+        if (userScopePath && userScopePath !== "/") {
+            params.push(userScopePath);
+            query += ` AND (COALESCE(merchant_path, '/') || '/') ILIKE $${params.length} || '%'`;
+        }
+
+        if (status) {
+            params.push(status);
+            query += ` AND status = $${params.length}`;
+        }
+
+        if (merchant_id) {
+            params.push(merchant_id);
+            query += ` AND merchant_id = $${params.length}`;
+        }
+
+        query += " ORDER BY created_at DESC";
+
+        const r = await pool.query(query, params);
         res.json({ success: true, data: r.rows });
-    } catch (err) { res.status(500).json({ success: false }); }
+    } catch (err) { 
+        console.error("getDevices Error:", err);
+        res.status(500).json({ success: false, message: "Server error" }); 
+    }
 };
 
 exports.getDeviceById = async (req, res) => {
     try {
-        const r = await pool.query("SELECT * FROM devices WHERE id = $1", [req.params.id]);
-        res.json({ success: true, data: r.rows[0] });
-    } catch (err) { res.status(500).json({ success: false }); }
+        const { role: userRole, tenant_id: userTenantId, roles = [] } = req.user;
+        const { id } = req.params;
+
+        let query = "SELECT * FROM devices WHERE id = $1 AND deleted_at IS NULL";
+        const params = [id];
+
+        if (userRole !== "SUPER_ADMIN") {
+            params.push(userTenantId);
+            query += ` AND tenant_id = $${params.length}`;
+        }
+
+        const r = await pool.query(query, params);
+        if (r.rows.length === 0) return res.status(404).json({ success: false, message: "Device not found" });
+
+        const device = r.rows[0];
+
+        // 🛡️ Additional Merchant Path check for Operators
+        if (userRole === "OPERATOR") {
+            const merchScope = roles.find(r => r.scope === "merchant");
+            if (merchScope) {
+                const userPath = (merchScope.scope_path || "/").toLowerCase().trim().replace(/\/$/, '') + '/';
+                const devicePath = (device.merchant_path || "/").toLowerCase().trim().replace(/\/$/, '') + '/';
+                if (!devicePath.startsWith(userPath)) {
+                    return res.status(403).json({ success: false, message: "Forbidden: Access outside assigned scope" });
+                }
+            }
+        }
+
+        res.json({ success: true, data: device });
+    } catch (err) { 
+        console.error("getDeviceById Error:", err);
+        res.status(500).json({ success: false }); 
+    }
 };
 
 exports.getCommandStatus = async (req, res) => {
     try {
-        const r = await pool.query("SELECT * FROM commands WHERE id = $1", [req.params.commandId]);
+        const { role: userRole, tenant_id: userTenantId } = req.user;
+        const { commandId } = req.params;
+
+        let query = `
+            SELECT c.* 
+            FROM commands c
+            JOIN devices d ON c.device_id = d.id
+            WHERE c.id = $1
+        `;
+        const params = [commandId];
+
+        if (userRole !== "SUPER_ADMIN") {
+            params.push(userTenantId);
+            query += ` AND d.tenant_id = $${params.length}`;
+        }
+
+        const r = await pool.query(query, params);
+        if (r.rows.length === 0) return res.status(404).json({ success: false, message: "Command not found or unauthorized" });
+        
         res.json({ success: true, command: r.rows[0] });
-    } catch (err) { res.status(500).json({ success: false }); }
+    } catch (err) { 
+        console.error("getCommandStatus Error:", err);
+        res.status(500).json({ success: false }); 
+    }
 };
 
 exports.updateDevice = async (req, res) => {
     try {
+        const { role: userRole, tenant_id: userTenantId } = req.user;
+        const { id } = req.params;
         const { model, merchant_id } = req.body;
         
+        // 🛡️ Scope check
+        const checkQuery = userRole === "SUPER_ADMIN" ? 
+            "SELECT id FROM devices WHERE id = $1" : 
+            "SELECT id FROM devices WHERE id = $1 AND tenant_id = $2";
+        const checkParams = userRole === "SUPER_ADMIN" ? [id] : [id, userTenantId];
+        
+        const deviceCheck = await pool.query(checkQuery, checkParams);
+        if (deviceCheck.rows.length === 0) return res.status(404).json({ success: false, message: "Device not found or unauthorized" });
+
         // Fetch Names if moved to new merchant
         let merchantName = null;
+        let merchantPath = "/";
         if (merchant_id) {
-            const mRes = await pool.query("SELECT name FROM merchants WHERE id = $1", [merchant_id]);
-            merchantName = mRes.rows[0]?.name || "Unknown";
+            const mRes = await pool.query("SELECT name, name_path FROM merchants WHERE id = $1", [merchant_id]);
+            if (mRes.rows.length > 0) {
+                merchantName = mRes.rows[0].name;
+                merchantPath = (mRes.rows[0].name_path || "/").toLowerCase().trim().replace(/\/$/, '') + '/';
+            }
         }
 
-        await pool.query("UPDATE devices SET model = $1, merchant_id = $2, merchant_name = $3 WHERE id = $4", [model, merchant_id, merchantName, req.params.id]);
+        await pool.query(
+            "UPDATE devices SET model = $1, merchant_id = $2, merchant_name = $3, merchant_path = $4 WHERE id = $5", 
+            [model, merchant_id, merchantName, merchantPath, id]
+        );
         res.json({ success: true });
-    } catch (err) { res.status(500).json({ success: false }); }
+    } catch (err) { 
+        console.error("updateDevice Error:", err);
+        res.status(500).json({ success: false }); 
+    }
 };
 
 exports.deleteDevice = async (req, res) => {
     try {
-        await pool.query("UPDATE devices SET deleted_at = NOW(), status = 'deleted' WHERE id = $1", [req.params.id]);
+        const { role: userRole, tenant_id: userTenantId } = req.user;
+        const { id } = req.params;
+
+        // 🛡️ Scope check
+        const checkQuery = userRole === "SUPER_ADMIN" ? 
+            "SELECT id FROM devices WHERE id = $1" : 
+            "SELECT id FROM devices WHERE id = $1 AND tenant_id = $2";
+        const checkParams = userRole === "SUPER_ADMIN" ? [id] : [id, userTenantId];
+
+        const deviceCheck = await pool.query(checkQuery, checkParams);
+        if (deviceCheck.rows.length === 0) return res.status(404).json({ success: false, message: "Device not found or unauthorized" });
+
+        await pool.query("UPDATE devices SET deleted_at = NOW(), status = 'deleted' WHERE id = $1", [id]);
         res.json({ success: true });
-    } catch (err) { res.status(500).json({ success: false }); }
+    } catch (err) { 
+        console.error("deleteDevice Error:", err);
+        res.status(500).json({ success: false }); 
+    }
 };
 
 exports.receiveHeartbeat = async (req, res) => {
@@ -309,7 +461,23 @@ exports.receiveHeartbeat = async (req, res) => {
 
 exports.checkEnrollmentStatus = async (req, res) => {
     try {
-        const r = await pool.query("SELECT * FROM enrollment_tokens WHERE id = $1", [req.params.id]);
+        const { role: userRole, tenant_id: userTenantId } = req.user;
+        const { id } = req.params;
+
+        let query = "SELECT * FROM enrollment_tokens WHERE id = $1";
+        const params = [id];
+
+        if (userRole !== "SUPER_ADMIN") {
+            params.push(userTenantId);
+            query += ` AND tenant_id = $${params.length}`;
+        }
+
+        const r = await pool.query(query, params);
+        if (r.rows.length === 0) return res.status(404).json({ success: false, message: "Token not found or unauthorized" });
+        
         res.json({ success: true, data: r.rows[0] });
-    } catch (err) { res.status(500).json({ success: false }); }
+    } catch (err) { 
+        console.error("checkEnrollmentStatus Error:", err);
+        res.status(500).json({ success: false }); 
+    }
 };
