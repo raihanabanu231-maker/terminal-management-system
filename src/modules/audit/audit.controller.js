@@ -94,9 +94,11 @@ exports.getDeviceAuditLogs = async (req, res) => {
             query += ` AND dal.device_id = $${params.length}`;
         }
 
+        const finalLimit = parseInt(limit) || 50;
+        const finalOffset = parseInt(offset) || 0;
         const currentParamsCount = params.length;
         query += ` ORDER BY dal.timestamp DESC LIMIT $${currentParamsCount + 1} OFFSET $${currentParamsCount + 2}`;
-        params.push(parseInt(limit), parseInt(offset));
+        params.push(finalLimit, finalOffset);
 
         const result = await pool.query(query, params);
         res.json({
