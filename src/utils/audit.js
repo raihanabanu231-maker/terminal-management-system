@@ -69,8 +69,11 @@ exports.logAudit = async (tenantId, userId, action, resourceType, resourceId, ne
                 );
                 
                 if (devRes.rows.length > 0) {
-                    const { tenant_id: tId, merchant_id: mId, merchant_path: mPath } = devRes.rows[0];
-                    
+                    // --- 🎯 NEW: Use descriptive message from newValues if present ---
+                    const descriptiveMessage = newValues?.message 
+                        ? newValues.message 
+                        : `Hardware Event: ${action} | User: ${userId || 'SYSTEM'}`;
+
                     await pool.query(
                         `INSERT INTO device_audit_logs 
                            (device_id, tenant_id, tenant_name, merchant_id, merchant_path, event_type, message, timestamp) 
@@ -82,7 +85,7 @@ exports.logAudit = async (tenantId, userId, action, resourceType, resourceId, ne
                             mId || null,
                             mPath || "/",
                             String(action).substring(0, 50), 
-                            `Hardware Event: ${action} | User: ${userId || 'SYSTEM'}`
+                            descriptiveMessage
                         ]
                     );
                 }
