@@ -1,13 +1,17 @@
 const express = require("express");
 const router = express.Router();
 
-const { login, registerWithInvite, getInviteDetails, refresh, logout, ping } = require("./auth.controller");
+const { login, registerWithInvite, getInviteDetails, refresh, logout, ping, forgotPassword, resetPassword } = require("./auth.controller");
 
 // 🔐 Login route
 router.post("/login", login);
 
 // 🏓 Ping route (Diagnostic)
 router.get("/ping", ping);
+
+// 🔑 Forgot & Reset Password
+router.post("/forgot-password", forgotPassword);
+router.post("/reset-password", resetPassword);
 
 // 🔄 Refresh Token route
 router.post("/refresh", refresh);

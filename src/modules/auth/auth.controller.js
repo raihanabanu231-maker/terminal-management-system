@@ -3,6 +3,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const { logAudit } = require("../../utils/audit");
+const { sendResetPasswordEmail } = require("../../utils/email");
 
 // --- CONFIG ---
 const ACCESS_TOKEN_EXPIRY = "15m";
@@ -439,5 +440,127 @@ exports.getInviteDetails = async (req, res) => {
       detail: error.message,
       code: error.code
     });
+  }
+};
+
+/**
+ * 🔑 Forgot Password - Step 1: Request Reset Token
+ */
+exports.forgotPassword = async (req, res) => {
+  const { email } = req.body;
+
+  try {
+    if (!email) return res.status(400).json({ success: false, message: "Email is required" });
+
+    // 1. Check if user exists (Ignore deletion)
+    const userRes = await pool.query("SELECT id, tenant_id FROM users WHERE email = $1 AND deleted_at IS NULL", [email]);
+    
+    // Security: If user not found, don't tell the attacker. Say "If email exists..."
+    if (userRes.rows.length === 0) {
+      console.log(`🔍 ForgotPassword: Non-existent email [${email}] requested reset.`);
+      return res.json({ success: true, message: "If an account with that email exists, we have sent a reset link." });
+    }
+
+    const user = userRes.rows[0];
+
+    // 2. Generate Secure Token
+    const token = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const expiresAt = new Date(Date.now() + 1 * 60 * 60 * 1000); // 1 Hour
+
+    // 3. Store in DB
+    await pool.query(
+      "INSERT INTO password_resets (email, token_hash, expires_at) VALUES ($1, $2, $3)",
+      [email, tokenHash, expiresAt]
+    );
+
+    // 4. Send Email
+    // Note: The frontend base URL should be in .env. We'll use a generic one or LOCALHOST for now.
+    const dashboardUrl = process.env.DASHBOARD_URL || "http://localhost:3000";
+    const resetLink = `${dashboardUrl}/reset-password?token=${token}&email=${encodeURIComponent(email)}`;
+    
+    await sendResetPasswordEmail(email, resetLink);
+
+    // 5. Audit Log Request
+    await logAudit(user.tenant_id, user.id, "auth.password_reset_requested", "USER", user.id, { ip: req.ip });
+
+    res.json({ success: true, message: "If an account with that email exists, we have sent a reset link." });
+
+  } catch (error) {
+    console.error("ForgotPassword Error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+/**
+ * 🔐 Reset Password - Step 2: Validate Token and Update Password
+ */
+exports.resetPassword = async (req, res) => {
+  const { email, token, newPassword } = req.body;
+
+  try {
+    if (!email || !token || !newPassword) {
+      return res.status(400).json({ success: false, message: "All fields (email, token, newPassword) are required." });
+    }
+
+    // 🎯 Password Strength Check
+    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&#])[A-Za-z\d@$!%*?&#]{8,}$/;
+    if (!passwordRegex.test(newPassword)) {
+        return res.status(400).json({ 
+            success: false, 
+            message: "New password is too weak. Must be 8+ chars with 1 Uppercase, 1 Lowercase, 1 Number, and 1 Special Char." 
+        });
+    }
+
+    // 1. Hash the incoming token to match DB
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+    // 2. Validate Token in DB
+    const resetRes = await pool.query(
+      "SELECT * FROM password_resets WHERE email = $1 AND token_hash = $2 AND used_at IS NULL AND expires_at > NOW()",
+      [email, tokenHash]
+    );
+
+    if (resetRes.rows.length === 0) {
+      return res.status(400).json({ success: false, message: "Invalid or expired reset token." });
+    }
+
+    const resetRequest = resetRes.rows[0];
+
+    // 3. Update User Password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Update password and reset lockout/failed attempts
+      const userRes = await client.query(
+        "UPDATE users SET password_hash = $1, failed_attempts = 0, locked_until = NULL WHERE email = $2 RETURNING id, tenant_id",
+        [hashedPassword, email]
+      );
+      
+      const userId = userRes.rows[0].id;
+      const tenantId = userRes.rows[0].tenant_id;
+
+      // Mark token as used
+      await client.query("UPDATE password_resets SET used_at = NOW() WHERE id = $1", [resetRequest.id]);
+
+      // Audit Log Success
+      await logAudit(tenantId, userId, "auth.password_reset_success", "USER", userId, { ip: req.ip });
+
+      await client.query("COMMIT");
+
+      res.json({ success: true, message: "Password updated successfully. You can now login." });
+
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+
+  } catch (error) {
+    console.error("ResetPassword Error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 };
