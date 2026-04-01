@@ -475,8 +475,8 @@ exports.forgotPassword = async (req, res) => {
     );
 
     // 4. Send Email
-    // Note: The frontend base URL should be in .env. We'll use a generic one or LOCALHOST for now.
-    const dashboardUrl = process.env.DASHBOARD_URL || "http://localhost:3000";
+    // 🎯 FIX: Use FRONTEND_URL or DASHBOARD_URL from .env
+    const dashboardUrl = process.env.FRONTEND_URL || process.env.DASHBOARD_URL || "http://localhost:3000";
     const resetLink = `${dashboardUrl}/reset-password?token=${token}&email=${encodeURIComponent(email)}`;
     
     await sendResetPasswordEmail(email, resetLink);
