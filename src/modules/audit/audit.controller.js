@@ -149,7 +149,7 @@ exports.receiveDeviceLogs = async (req, res) => {
     try {
         // 1. Fetch Device Context & Policy
         const dRes = await pool.query(`
-            SELECT d.merchant_id, d.merchant_path, d.tenant_name, t.audit_logging_enabled as t_audit, m.audit_logging_enabled as m_audit
+            SELECT d.merchant_id, d.merchant_path, d.tenant_name, d.audit_logging_enabled as d_audit, t.audit_logging_enabled as t_audit, m.audit_logging_enabled as m_audit
             FROM devices d
             JOIN tenants t ON d.tenant_id = t.id
             LEFT JOIN merchants m ON d.merchant_id = m.id
@@ -161,8 +161,8 @@ exports.receiveDeviceLogs = async (req, res) => {
         }
 
         const dev = dRes.rows[0];
-        // RESOLUTION: Merchant > Tenant > Default (True)
-        const isEnabled = dev.m_audit !== null ? dev.m_audit : (dev.t_audit !== null ? dev.t_audit : true);
+        // 🛡️ TRIPLE-LOCK RESOLUTION: Device > Merchant > Tenant > Default (True)
+        const isEnabled = dev.d_audit !== null ? dev.d_audit : (dev.m_audit !== null ? dev.m_audit : (dev.t_audit !== null ? dev.t_audit : true));
         
         if (!isEnabled) {
             console.log(`[AUDIT] Policy is DISABLED for device ${deviceId}. Ignoring ${logs.length} logs.`);
@@ -332,7 +332,7 @@ exports.getAuditPolicy = async (req, res) => {
         const deviceId = req.user.id;
         
         const dRes = await pool.query(`
-            SELECT t.audit_logging_enabled as t_audit, m.audit_logging_enabled as m_audit
+            SELECT d.audit_logging_enabled as d_audit, t.audit_logging_enabled as t_audit, m.audit_logging_enabled as m_audit
             FROM devices d
             JOIN tenants t ON d.tenant_id = t.id
             LEFT JOIN merchants m ON d.merchant_id = m.id
@@ -344,8 +344,8 @@ exports.getAuditPolicy = async (req, res) => {
         }
 
         const dev = dRes.rows[0];
-        // Hierarchical Policy Resolution (Merchant > Tenant > Default: True)
-        const isEnabled = dev.m_audit !== null ? dev.m_audit : (dev.t_audit !== null ? dev.t_audit : true);
+        // 🛡️ TRIPLE-LOCK RESOLUTION: Device > Merchant > Tenant > Default (True)
+        const isEnabled = dev.d_audit !== null ? dev.d_audit : (dev.m_audit !== null ? dev.m_audit : (dev.t_audit !== null ? dev.t_audit : true));
 
         res.json({
             success: true,
