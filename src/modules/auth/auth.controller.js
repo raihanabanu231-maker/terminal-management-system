@@ -475,9 +475,9 @@ exports.forgotPassword = async (req, res) => {
     );
 
     // 4. Send Email
-    // 🎯 FIX: Use FRONTEND_URL or DASHBOARD_URL from .env
-    const dashboardUrl = process.env.FRONTEND_URL || process.env.DASHBOARD_URL || "http://localhost:3000";
-    const resetLink = `${dashboardUrl}/reset-password?token=${token}&email=${encodeURIComponent(email)}`;
+    // 🎯 FIX: Remove trailing slash from URL if present to prevent double // in links
+    const baseUrl = (process.env.FRONTEND_URL || process.env.DASHBOARD_URL || "http://localhost:3000").replace(/\/$/, "");
+    const resetLink = `${baseUrl}/reset-password?token=${token}&email=${encodeURIComponent(email)}`;
     
     await sendResetPasswordEmail(email, resetLink);
 
