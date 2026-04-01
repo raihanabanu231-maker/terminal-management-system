@@ -22,7 +22,7 @@ router.get(
 router.get(
     "/devices",
     verifyToken,
-    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR"),
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR", "DEVICE"),
     getDeviceAuditLogs
 );
 

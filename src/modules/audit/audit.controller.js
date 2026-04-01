@@ -100,17 +100,22 @@ exports.getDeviceAuditLogs = async (req, res) => {
         }
 
         // --- NEW FILTERS ---
-        if (device_id) {
-            params.push(device_id);
+        if (userRole === "DEVICE") {
+            params.push(req.user.id);
             query += ` AND dal.device_id = $${params.length}`;
-        }
-        if (merchant_id) {
-            params.push(merchant_id);
-            query += ` AND dal.merchant_id = $${params.length}`;
-        }
-        if (event_type) {
-            params.push(event_type);
-            query += ` AND dal.event_type = $${params.length}`;
+        } else {
+            if (device_id) {
+                params.push(device_id);
+                query += ` AND dal.device_id = $${params.length}`;
+            }
+            if (merchant_id) {
+                params.push(merchant_id);
+                query += ` AND dal.merchant_id = $${params.length}`;
+            }
+            if (event_type) {
+                params.push(event_type);
+                query += ` AND dal.event_type = $${params.length}`;
+            }
         }
 
         const fLimit = parseInt(limit) || 50;
