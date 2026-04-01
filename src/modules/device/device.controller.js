@@ -49,7 +49,7 @@ exports.generateEnrollmentToken = async (req, res) => {
             // Fetch Tenant Name for display record
             const tRes = await pool.query("SELECT name FROM tenants WHERE id = $1", [finalTenantId]);
             const tenantName = tRes.rows[0]?.name || "Unknown";
-            
+
             let merchantName = null;
             if (merchant_id) {
                 const mRes = await pool.query("SELECT name FROM merchants WHERE id = $1", [merchant_id]);
@@ -117,7 +117,7 @@ exports.enrollDevice = async (req, res) => {
             // Fetch Names for saving in the table
             const tRes = await pool.query("SELECT name FROM tenants WHERE id = $1", [enrollmentRecord.tenant_id]);
             const tenantName = tRes.rows[0]?.name || "Unknown";
-            
+
             let merchantName = null;
             if (enrollmentRecord.merchant_id) {
                 const mRes = await pool.query("SELECT name FROM merchants WHERE id = $1", [enrollmentRecord.merchant_id]);
@@ -183,7 +183,7 @@ exports.startStatusJob = () => {
     setInterval(async () => {
         try {
             await pool.query("UPDATE devices SET device_status = 'offline' WHERE last_seen < NOW() - INTERVAL '5 minutes' AND device_status != 'offline'");
-        } catch (error) {}
+        } catch (error) { }
     }, 60000);
 };
 
@@ -223,7 +223,7 @@ exports.sendDeviceCommand = async (req, res) => {
 
         const dRes = await pool.query(scopeQuery, scopeParams);
         if (dRes.rows.length === 0) return res.status(404).json({ success: false, message: "Device not found or unauthorized" });
-        
+
         const device = dRes.rows[0];
 
         // 🛡️ SUB-LOGIC: Check Merchant Path if Operator
@@ -239,20 +239,20 @@ exports.sendDeviceCommand = async (req, res) => {
         }
 
         const cmdRes = await pool.query(
-            "INSERT INTO commands (device_id, type, payload, status, created_by, expires_at) VALUES ($1,$2,$3,'queued',$4, NOW() + INTERVAL '24 hours') RETURNING id", 
+            "INSERT INTO commands (device_id, type, payload, status, created_by, expires_at) VALUES ($1,$2,$3,'queued',$4, NOW() + INTERVAL '24 hours') RETURNING id",
             [deviceId, type, payload || {}, req.user.id]
         );
-        
+
         await logAudit(device.tenant_id, req.user.id, `${type}_INITIATED`, 'DEVICE', deviceId, { action: type, payload });
 
         const { sendCommand } = require("../../gateway/socket.gateway");
         const success = sendCommand(deviceId, { type: "command", id: cmdRes.rows[0].id, cmd: type, payload });
         if (success) await pool.query("UPDATE commands SET status = 'sent', sent_at = NOW() WHERE id = $1", [cmdRes.rows[0].id]);
-        
+
         res.json({ success: true, command_id: cmdRes.rows[0].id });
-    } catch (err) { 
+    } catch (err) {
         console.error("sendDeviceCommand Error:", err);
-        res.status(500).json({ success: false, message: "Internal server error" }); 
+        res.status(500).json({ success: false, message: "Internal server error" });
     }
 };
 
@@ -273,7 +273,7 @@ exports.ackCommand = async (req, res) => {
     try {
         const status = success ? 'completed' : 'failed';
         await pool.query("UPDATE commands SET status = $1, acked_at = NOW(), payload = payload || $2::jsonb WHERE id = $3", [status, JSON.stringify({ result_data }), commandId]);
-        
+
         const cmdRes = await pool.query("SELECT c.type, d.tenant_id FROM commands c JOIN devices d ON c.device_id = d.id WHERE c.id = $1", [commandId]);
         if (cmdRes.rows.length > 0) {
             const { type, tenant_id } = cmdRes.rows[0];
@@ -281,9 +281,9 @@ exports.ackCommand = async (req, res) => {
         }
 
         res.json({ success: true });
-    } catch (err) { 
+    } catch (err) {
         console.error("ackCommand Error:", err);
-        res.status(500).json({ success: false }); 
+        res.status(500).json({ success: false });
     }
 };
 
@@ -325,9 +325,9 @@ exports.getDevices = async (req, res) => {
 
         const r = await pool.query(query, params);
         res.json({ success: true, data: r.rows });
-    } catch (err) { 
+    } catch (err) {
         console.error("getDevices Error:", err);
-        res.status(500).json({ success: false, message: "Server error" }); 
+        res.status(500).json({ success: false, message: "Server error" });
     }
 };
 
@@ -362,9 +362,9 @@ exports.getDeviceById = async (req, res) => {
         }
 
         res.json({ success: true, data: device });
-    } catch (err) { 
+    } catch (err) {
         console.error("getDeviceById Error:", err);
-        res.status(500).json({ success: false }); 
+        res.status(500).json({ success: false });
     }
 };
 
@@ -388,11 +388,11 @@ exports.getCommandStatus = async (req, res) => {
 
         const r = await pool.query(query, params);
         if (r.rows.length === 0) return res.status(404).json({ success: false, message: "Command not found or unauthorized" });
-        
+
         res.json({ success: true, command: r.rows[0] });
-    } catch (err) { 
+    } catch (err) {
         console.error("getCommandStatus Error:", err);
-        res.status(500).json({ success: false }); 
+        res.status(500).json({ success: false });
     }
 };
 
@@ -401,13 +401,13 @@ exports.updateDevice = async (req, res) => {
         const { role: userRole, tenant_id: userTenantId } = req.user;
         const { id } = req.params;
         const { model, merchant_id } = req.body;
-        
+
         // 🛡️ Scope check
-        const checkQuery = userRole === "SUPER_ADMIN" ? 
-            "SELECT id FROM devices WHERE id = $1" : 
+        const checkQuery = userRole === "SUPER_ADMIN" ?
+            "SELECT id FROM devices WHERE id = $1" :
             "SELECT id FROM devices WHERE id = $1 AND tenant_id = $2";
         const checkParams = userRole === "SUPER_ADMIN" ? [id] : [id, userTenantId];
-        
+
         const deviceCheck = await pool.query(checkQuery, checkParams);
         if (deviceCheck.rows.length === 0) return res.status(404).json({ success: false, message: "Device not found or unauthorized" });
 
@@ -423,13 +423,13 @@ exports.updateDevice = async (req, res) => {
         }
 
         await pool.query(
-            "UPDATE devices SET model = $1, merchant_id = $2, merchant_name = $3, merchant_path = $4 WHERE id = $5", 
+            "UPDATE devices SET model = $1, merchant_id = $2, merchant_name = $3, merchant_path = $4 WHERE id = $5",
             [model, merchant_id, merchantName, merchantPath, id]
         );
         res.json({ success: true });
-    } catch (err) { 
+    } catch (err) {
         console.error("updateDevice Error:", err);
-        res.status(500).json({ success: false }); 
+        res.status(500).json({ success: false });
     }
 };
 
@@ -439,8 +439,8 @@ exports.deleteDevice = async (req, res) => {
         const { id } = req.params;
 
         // 🛡️ Scope check
-        const checkQuery = userRole === "SUPER_ADMIN" ? 
-            "SELECT id FROM devices WHERE id = $1" : 
+        const checkQuery = userRole === "SUPER_ADMIN" ?
+            "SELECT id FROM devices WHERE id = $1" :
             "SELECT id FROM devices WHERE id = $1 AND tenant_id = $2";
         const checkParams = userRole === "SUPER_ADMIN" ? [id] : [id, userTenantId];
 
@@ -449,9 +449,9 @@ exports.deleteDevice = async (req, res) => {
 
         await pool.query("UPDATE devices SET deleted_at = NOW(), status = 'deleted' WHERE id = $1", [id]);
         res.json({ success: true });
-    } catch (err) { 
+    } catch (err) {
         console.error("deleteDevice Error:", err);
-        res.status(500).json({ success: false }); 
+        res.status(500).json({ success: false });
     }
 };
 
@@ -477,10 +477,10 @@ exports.checkEnrollmentStatus = async (req, res) => {
 
         const r = await pool.query(query, params);
         if (r.rows.length === 0) return res.status(404).json({ success: false, message: "Token not found or unauthorized" });
-        
+
         res.json({ success: true, data: r.rows[0] });
-    } catch (err) { 
+    } catch (err) {
         console.error("checkEnrollmentStatus Error:", err);
-        res.status(500).json({ success: false }); 
+        res.status(500).json({ success: false });
     }
 };
