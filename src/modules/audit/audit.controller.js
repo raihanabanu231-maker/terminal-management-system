@@ -250,6 +250,15 @@ exports.toggleAuditLogging = async (req, res) => {
                 return res.status(404).json({ success: false, message: "Merchant not found in your tenant" });
             }
 
+            // 🛠️ ENHANCEMENT: Also notify all active devices under this merchant
+            const devicesRes = await pool.query("SELECT id FROM devices WHERE merchant_id = $1 AND status = 'active'", [target_merchant_id]);
+            for (const dev of devicesRes.rows) {
+                await pool.query(
+                    "INSERT INTO commands (device_id, type, payload, status, created_by, expires_at) VALUES ($1,$2,$3,'queued',$4, NOW() + INTERVAL '24 hours')",
+                    [dev.id, 'TOGGLE_LOGGING', { action: enabled ? 'ON' : 'OFF' }, userId]
+                );
+            }
+
             await logAudit(tenant_id, userId, "MERCHANT_AUDIT_TOGGLED", "MERCHANT", target_merchant_id, { 
                 actor_role: role,
                 target: "Merchant",
@@ -260,7 +269,7 @@ exports.toggleAuditLogging = async (req, res) => {
             
             return res.json({ 
                 success: true, 
-                message: `Audit logging ${statusText} successfully for Merchant.` 
+                message: `Audit logging ${statusText} successfully for Merchant. Commands queued for ${devicesRes.rowCount} devices.` 
             });
         } else {
             // Toggle for root tenant
@@ -281,6 +290,15 @@ exports.toggleAuditLogging = async (req, res) => {
                 return res.status(404).json({ success: false, message: "Tenant not found" });
             }
 
+            // 🛠️ ENHANCEMENT: Also notify all active devices under this tenant
+            const devicesRes = await pool.query("SELECT id FROM devices WHERE tenant_id = $1 AND status = 'active'", [tenant_id]);
+            for (const dev of devicesRes.rows) {
+                await pool.query(
+                    "INSERT INTO commands (device_id, type, payload, status, created_by, expires_at) VALUES ($1,$2,$3,'queued',$4, NOW() + INTERVAL '24 hours')",
+                    [dev.id, 'TOGGLE_LOGGING', { action: enabled ? 'ON' : 'OFF' }, userId]
+                );
+            }
+
             await logAudit(tenant_id, userId, "TENANT_AUDIT_TOGGLED", "TENANT", tenant_id, { 
                 actor_role: role,
                 target: "Tenant",
@@ -291,7 +309,7 @@ exports.toggleAuditLogging = async (req, res) => {
             
             return res.json({ 
                 success: true, 
-                message: `Audit logging ${statusText} successfully for Tenant.` 
+                message: `Audit logging ${statusText} successfully for Tenant. Commands queued for ${devicesRes.rowCount} devices.` 
             });
         }
     } catch (error) {
