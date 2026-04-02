@@ -526,7 +526,17 @@ exports.resetPassword = async (req, res) => {
 
     const resetRequest = resetRes.rows[0];
 
-    // 3. Update User Password
+    // 3. Prevent Password Reuse
+    const userResult = await pool.query("SELECT password_hash FROM users WHERE email = $1", [email]);
+    if (userResult.rows.length > 0) {
+      const currentHash = userResult.rows[0].password_hash;
+      const isAlreadyUsingThis = await bcrypt.compare(newPassword, currentHash);
+      if (isAlreadyUsingThis) {
+        return res.status(400).json({ success: false, message: "New password must be different from the old password." });
+      }
+    }
+
+    // 4. Update User Password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
     const client = await pool.connect();
     try {
