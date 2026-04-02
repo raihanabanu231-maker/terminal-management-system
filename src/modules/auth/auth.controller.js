@@ -495,14 +495,19 @@ exports.forgotPassword = async (req, res) => {
  * 🔐 Reset Password - Step 2: Validate Token and Update Password
  */
 exports.resetPassword = async (req, res) => {
-  const { email, token, newPassword } = req.body;
+  const { token, password } = req.body;
+  const newPassword = password; // Map password to newPassword for consistency with downstream logic
 
   try {
-    if (!email || !token || !newPassword) {
-      return res.status(400).json({ success: false, message: "All fields (email, token, newPassword) are required." });
+    // 🎯 1. Input Validation
+    if (!token) {
+        return res.status(400).json({ success: false, message: "Token is required." });
+    }
+    if (!password) {
+        return res.status(400).json({ success: false, message: "Password is required." });
     }
 
-    // 🎯 Password Strength Check
+    // 🎯 2. Password Strength Check
     const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&#])[A-Za-z\d@$!%*?&#]{8,}$/;
     if (!passwordRegex.test(newPassword)) {
         return res.status(400).json({ 
@@ -511,13 +516,11 @@ exports.resetPassword = async (req, res) => {
         });
     }
 
-    // 1. Hash the incoming token to match DB
+    // 🎯 3. Verify Token in DB
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-
-    // 2. Validate Token in DB
     const resetRes = await pool.query(
-      "SELECT * FROM password_resets WHERE email = $1 AND token_hash = $2 AND used_at IS NULL AND expires_at > NOW()",
-      [email, tokenHash]
+      "SELECT * FROM password_resets WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()",
+      [tokenHash]
     );
 
     if (resetRes.rows.length === 0) {
@@ -525,8 +528,9 @@ exports.resetPassword = async (req, res) => {
     }
 
     const resetRequest = resetRes.rows[0];
+    const email = resetRequest.email;
 
-    // 3. Prevent Password Reuse
+    // 🎯 4. Prevent Password Reuse (Compare with existing hash)
     const userResult = await pool.query("SELECT password_hash FROM users WHERE email = $1", [email]);
     if (userResult.rows.length > 0) {
       const currentHash = userResult.rows[0].password_hash;
@@ -536,7 +540,7 @@ exports.resetPassword = async (req, res) => {
       }
     }
 
-    // 4. Update User Password
+    // 🎯 5. Update User Password in Transaction
     const hashedPassword = await bcrypt.hash(newPassword, 10);
     const client = await pool.connect();
     try {
@@ -559,7 +563,7 @@ exports.resetPassword = async (req, res) => {
 
       await client.query("COMMIT");
 
-      res.json({ success: true, message: "Password updated successfully. You can now login." });
+      res.json({ success: true, message: "Password reset successful" });
 
     } catch (e) {
       await client.query("ROLLBACK");
