@@ -455,10 +455,9 @@ exports.forgotPassword = async (req, res) => {
     // 1. Check if user exists (Ignore deletion)
     const userRes = await pool.query("SELECT id, tenant_id FROM users WHERE email = $1 AND deleted_at IS NULL", [email]);
     
-    // Security: If user not found, don't tell the attacker. Say "If email exists..."
     if (userRes.rows.length === 0) {
       console.log(`🔍 ForgotPassword: Non-existent email [${email}] requested reset.`);
-      return res.json({ success: true, message: "If an account with that email exists, we have sent a reset link." });
+      return res.status(404).json({ success: false, message: "No account found with this email address." });
     }
 
     const user = userRes.rows[0];
