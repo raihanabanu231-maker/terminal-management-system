@@ -475,8 +475,8 @@ exports.forgotPassword = async (req, res) => {
 
     // 4. Send Email
     // 🎯 FIX: Remove trailing slash from URL if present to prevent double // in links
-    const baseUrl = (process.env.FRONTEND_URL || process.env.DASHBOARD_URL || "http://localhost:3000").replace(/\/$/, "");
-    const resetLink = `${baseUrl}/reset-password?token=${token}&email=${encodeURIComponent(email)}`;
+    const frontendUrl = (process.env.FRONTEND_URL || "https://atpl-tms-frontend.onrender.com").replace(/\/$/, "");
+    const resetLink = `${frontendUrl}/reset-password?token=${token}`;
     
     await sendResetPasswordEmail(email, resetLink);
 
