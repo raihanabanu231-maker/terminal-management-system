@@ -141,7 +141,7 @@ exports.startLogSession = async (req, res) => {
 
     } catch (error) {
         console.error("StartLogSession Error:", error);
-        res.status(500).json({ success: false, message: "Internal server error during session start.", error: error.message });
+        res.status(500).json({ success: false, message: "Internal server error during session start." });
     }
 };
 
