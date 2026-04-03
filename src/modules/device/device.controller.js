@@ -490,13 +490,19 @@ exports.checkEnrollmentStatus = async (req, res) => {
         const { role: userRole, tenant_id: userTenantId } = req.user;
         const { id } = req.params;
 
-        let query = "SELECT * FROM enrollment_tokens WHERE id = $1";
+        // Logic: Try to find by token ID OR find the latest token for this Tenant
+        let query = `
+            SELECT * FROM enrollment_tokens 
+            WHERE (id = $1 OR tenant_id = $1)
+        `;
         const params = [id];
 
         if (userRole !== "SUPER_ADMIN") {
             params.push(userTenantId);
             query += ` AND tenant_id = $${params.length}`;
         }
+
+        query += " ORDER BY created_at DESC LIMIT 1";
 
         const r = await pool.query(query, params);
         if (r.rows.length === 0) return res.status(404).json({ success: false, message: "Token not found or unauthorized" });
