@@ -1,7 +1,8 @@
 const pool = require("../../config/db");
 const { logAudit } = require("../../utils/audit");
+const { generateUploadUrl, generateDownloadUrl } = require("../../utils/s3");
 
-// --- V7 HELPER: Normalization (Strict Formatting) ---
+// Helper: Normalize Paths for RBAC
 const normalizePath = (path) => {
     if (!path) return "/";
     let p = path.trim().toLowerCase();
@@ -11,8 +12,7 @@ const normalizePath = (path) => {
 };
 
 /**
- * 1. Retrieve System Audit Logs (Internal/User Actions)
- * GET /api/v1/audit
+ * 1. Retrieve System Audit Logs
  */
 exports.getAuditLogs = async (req, res) => {
     try {
@@ -66,294 +66,344 @@ exports.getAuditLogs = async (req, res) => {
 };
 
 /**
- * 2. Retrieve Device Audit Logs (Android Generated)
- * GET /api/v1/audit/devices
+ * 2. Start Log Session (Tenant Admin / Operator)
+ * Enforces single active session per device.
  */
-exports.getDeviceAuditLogs = async (req, res) => {
-    try {
-        const { role: userRole, tenant_id: userTenantId } = req.user;
-        const { limit = 50, offset = 0, device_id, merchant_id, event_type } = req.query;
+exports.startLogSession = async (req, res) => {
+    const { device_id, log_level = 'DEBUG' } = req.body;
+    const { role: userRole, tenant_id: userTenantId, id: userId, roles = [] } = req.user;
 
-        const roles = req.user.roles || [];
-        let userScopePath = "/";
+    if (!device_id) return res.status(400).json({ success: false, message: "device_id is required" });
+
+    try {
+        // 🛡️ RBAC & Scope Check
+        let deviceQuery = "SELECT id, tenant_id, merchant_path FROM devices WHERE id = $1 AND deleted_at IS NULL";
+        const deviceParams = [device_id];
+
         if (userRole !== "SUPER_ADMIN") {
-            const merchantRoles = roles.filter(r => r.scope === "merchant");
-            if (merchantRoles.length > 0) userScopePath = merchantRoles[0].scope_path;
+            deviceParams.push(userTenantId);
+            deviceQuery += ` AND tenant_id = $${deviceParams.length}`;
         }
 
+        const dRes = await pool.query(deviceQuery, deviceParams);
+        if (dRes.rows.length === 0) return res.status(404).json({ success: false, message: "Device not found or unauthorized" });
+
+        const device = dRes.rows[0];
+
+        // Operator check
+        if (userRole === "OPERATOR") {
+            const merchScope = roles.find(r => r.scope === "merchant");
+            if (merchScope) {
+                const userPath = normalizePath(merchScope.scope_path);
+                const devicePath = normalizePath(device.merchant_path);
+                if (!devicePath.startsWith(userPath)) {
+                    return res.status(403).json({ success: false, message: "Device outside your assigned branch scope" });
+                }
+            }
+        }
+
+        // 🛡️ PREVENT MULTIPLE ACTIVE SESSIONS
+        const activeCheck = await pool.query("SELECT id FROM device_log_sessions WHERE device_id = $1 AND status = 'active'", [device_id]);
+        if (activeCheck.rows.length > 0) {
+            return res.status(409).json({ success: false, message: "A logging session is already active for this device. Stop the old one first." });
+        }
+
+        // 📝 Create Session Record
+        const storagePath = `tenants/${device.tenant_id}/devices/${device.id}/logs/`;
+        const sessionRes = await pool.query(
+            `INSERT INTO device_log_sessions (device_id, tenant_id, started_by, status, log_level, storage_path, last_chunk_number)
+             VALUES ($1, $2, $3, 'active', $4, $5, 1)
+             RETURNING id`,
+            [device.id, device.tenant_id, userId, log_level, storagePath]
+        );
+
+        const sessionId = sessionRes.rows[0].id;
+
+        // 🔗 Generate Initial Upload URL (Chunk 1)
+        const uploadUrl = await generateUploadUrl(device.tenant_id, device.id, sessionId, 1);
+
+        // 📡 Send Command to Device
+        const commandPayload = {
+            cmd: "start_logging",
+            session_id: sessionId,
+            level: log_level,
+            upload_url: uploadUrl
+        };
+
+        await pool.query(
+            "INSERT INTO commands (device_id, type, payload, status, created_by, expires_at) VALUES ($1,$2,$3,'queued',$4, NOW() + INTERVAL '1 hour')",
+            [device.id, 'START_LOGGING', commandPayload, userId]
+        );
+
+        await logAudit(device.tenant_id, userId, "log.enable", "DEVICE", device.id, { session_id: sessionId, log_level });
+
+        res.json({ success: true, session_id: sessionId, upload_url: uploadUrl });
+
+    } catch (error) {
+        console.error("StartLogSession Error:", error);
+        res.status(500).json({ success: false, message: "Internal server error during session start." });
+    }
+};
+
+/**
+ * 3. Stop Log Session (Tenant Admin / Operator)
+ */
+exports.stopLogSession = async (req, res) => {
+    const { session_id } = req.params;
+    const { role: userRole, tenant_id: userTenantId, id: userId, roles = [] } = req.user;
+
+    try {
+        const sRes = await pool.query(
+            "SELECT s.*, d.merchant_path FROM device_log_sessions s JOIN devices d ON s.device_id = d.id WHERE s.id = $1",
+            [session_id]
+        );
+
+        if (sRes.rows.length === 0) return res.status(404).json({ success: false, message: "Session not found" });
+
+        const session = sRes.rows[0];
+
+        if (session.status !== 'active') {
+            return res.status(400).json({ success: false, message: `Cannot stop session in '${session.status}' state.` });
+        }
+
+        // RBAC
+        if (userRole !== "SUPER_ADMIN" && session.tenant_id !== userTenantId) {
+            return res.status(403).json({ success: false, message: "Unauthorized" });
+        }
+
+        if (userRole === "OPERATOR") {
+            const merchScope = roles.find(r => r.scope === "merchant");
+            if (merchScope) {
+                const userPath = normalizePath(merchScope.scope_path);
+                const devicePath = normalizePath(session.merchant_path);
+                if (!devicePath.startsWith(userPath)) {
+                    return res.status(403).json({ success: false, message: "Forbidden" });
+                }
+            }
+        }
+
+        await pool.query("UPDATE device_log_sessions SET status = 'stopped', updated_at = NOW() WHERE id = $1", [session_id]);
+
+        // 📡 Queue Stop Command
+        const commandPayload = { cmd: "stop_logging", session_id };
+        await pool.query(
+            "INSERT INTO commands (device_id, type, payload, status, created_by, expires_at) VALUES ($1,$2,$3,'queued',$4, NOW() + INTERVAL '1 hour')",
+            [session.device_id, 'STOP_LOGGING', commandPayload, userId]
+        );
+
+        await logAudit(session.tenant_id, userId, "log.disable", "DEVICE", session.device_id, { session_id });
+
+        res.json({ success: true, message: "Stop command issued to device." });
+
+    } catch (error) {
+        console.error("StopLogSession Error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
+/**
+ * 4. Get Log Sessions (Admin / Operator)
+ */
+exports.getLogSessions = async (req, res) => {
+    try {
+        const { device_id, status, limit = 50, offset = 0 } = req.query;
+        const { role: userRole, tenant_id: userTenantId, roles = [] } = req.user;
+
         let query = `
-            SELECT dal.*, d.serial, d.model 
-            FROM device_audit_logs dal
-            LEFT JOIN devices d ON dal.device_id = d.id
+            SELECT s.*, d.serial, d.model, u.email as started_by_email
+            FROM device_log_sessions s
+            JOIN devices d ON s.device_id = d.id
+            LEFT JOIN users u ON s.started_by = u.id
             WHERE 1=1
         `;
         const params = [];
 
         if (userRole !== "SUPER_ADMIN") {
             params.push(userTenantId);
-            query += ` AND dal.tenant_id = $${params.length}`;
+            query += ` AND s.tenant_id = $${params.length}`;
         }
 
-        if (userScopePath && userScopePath !== "/") {
-            params.push(userScopePath);
-            query += ` AND (COALESCE(dal.merchant_path, '/') || '/') ILIKE $${params.length} || '%'`;
+        if (device_id) {
+            params.push(device_id);
+            query += ` AND s.device_id = $${params.length}`;
         }
 
-        // --- NEW FILTERS ---
-        if (userRole === "DEVICE") {
-            params.push(req.user.id);
-            query += ` AND dal.device_id = $${params.length}`;
-        } else {
-            if (device_id) {
-                params.push(device_id);
-                query += ` AND dal.device_id = $${params.length}`;
-            }
-            if (merchant_id) {
-                params.push(merchant_id);
-                query += ` AND dal.merchant_id = $${params.length}`;
-            }
-            if (event_type) {
-                params.push(event_type);
-                query += ` AND dal.event_type = $${params.length}`;
+        if (status) {
+            params.push(status);
+            query += ` AND s.status = $${params.length}`;
+        }
+
+        // Operator scope filtering
+        if (userRole === "OPERATOR") {
+            const merchScope = roles.find(r => r.scope === "merchant");
+            if (merchScope) {
+                const userPath = normalizePath(merchScope.scope_path);
+                params.push(userPath);
+                query += ` AND (COALESCE(d.merchant_path, '/') || '/') ILIKE $${params.length} || '%'`;
             }
         }
 
         const fLimit = parseInt(limit) || 50;
         const fOffset = parseInt(offset) || 0;
         const currentParamsCount = params.length;
-        query += ` ORDER BY dal.timestamp DESC LIMIT $${currentParamsCount + 1} OFFSET $${currentParamsCount + 2}`;
+        query += ` ORDER BY s.start_time DESC LIMIT $${currentParamsCount + 1} OFFSET $${currentParamsCount + 2}`;
         params.push(fLimit, fOffset);
 
         const result = await pool.query(query, params);
-        res.json({ success: true, data: result.rows, meta: { limit: fLimit, offset: fOffset, count: result.rows.length } });
+        await logAudit(userRole === "SUPER_ADMIN" ? null : userTenantId, req.user.id, "log.view", "DEVICE", null, { count: result.rows.length });
+        res.json({ success: true, data: result.rows });
+
     } catch (error) {
-        console.error("GetDeviceAuditLogs Error:", error);
+        console.error("GetLogSessions Error:", error);
         res.status(500).json({ success: false, message: "Server error" });
     }
 };
 
 /**
- * 3. Receive Device Audit Logs (From Android)
+ * 5. Get Session Chunks
+ * GET /api/v1/audit/sessions/:session_id/chunks
  */
-exports.receiveDeviceLogs = async (req, res) => {
-    // FLEXIBILITY: Detect if req.body is a raw array OR an object with a 'logs' key
-    let logs = Array.isArray(req.body) ? req.body : req.body.logs;
-    
+exports.getLogSessionChunks = async (req, res) => {
+    const { session_id } = req.params;
+    const { role: userRole, tenant_id: userTenantId, roles = [] } = req.user;
+
+    try {
+        const sRes = await pool.query(
+            "SELECT s.*, d.merchant_path FROM device_log_sessions s JOIN devices d ON s.device_id = d.id WHERE s.id = $1",
+            [session_id]
+        );
+        if (sRes.rows.length === 0) return res.status(404).json({ success: false, message: "Session not found" });
+
+        const session = sRes.rows[0];
+
+        // RBAC
+        if (userRole !== "SUPER_ADMIN" && session.tenant_id !== userTenantId) {
+            return res.status(403).json({ success: false, message: "Unauthorized" });
+        }
+
+        if (userRole === "OPERATOR") {
+            const merchScope = roles.find(r => r.scope === "merchant");
+            if (merchScope) {
+                const userPath = normalizePath(merchScope.scope_path);
+                const devicePath = normalizePath(session.merchant_path);
+                if (!devicePath.startsWith(userPath)) return res.status(403).json({ success: false, message: "Forbidden" });
+            }
+        }
+
+        const chunks = [];
+        for (let i = 1; i <= session.last_chunk_number; i++) {
+            chunks.push({
+                chunk_number: i,
+                name: `chunk_${i}.log`,
+                path: `${session.storage_path}${session_id}/chunk_${i}.log`
+            });
+        }
+
+        res.json({ success: true, session_id, chunks });
+    } catch (error) {
+        res.status(500).json({ success: false });
+    }
+};
+
+/**
+ * 6. Get Download URL for Specific Chunk
+ */
+exports.getLogDownloadUrl = async (req, res) => {
+    const { session_id } = req.params;
+    const { chunk_number = 1 } = req.query;
+    const { role: userRole, tenant_id: userTenantId, id: userId, roles = [] } = req.user;
+
+    try {
+        const sRes = await pool.query(
+            "SELECT s.*, d.merchant_path FROM device_log_sessions s JOIN devices d ON s.device_id = d.id WHERE s.id = $1",
+            [session_id]
+        );
+
+        if (sRes.rows.length === 0) return res.status(404).json({ success: false, message: "Session not found" });
+
+        const session = sRes.rows[0];
+
+        // RBAC
+        if (userRole !== "SUPER_ADMIN" && session.tenant_id !== userTenantId) {
+            return res.status(403).json({ success: false, message: "Unauthorized" });
+        }
+
+        if (userRole === "OPERATOR") {
+            const merchScope = roles.find(r => r.scope === "merchant");
+            if (merchScope) {
+                const userPath = normalizePath(merchScope.scope_path);
+                const devicePath = normalizePath(session.merchant_path);
+                if (!devicePath.startsWith(userPath)) return res.status(403).json({ success: false, message: "Forbidden" });
+            }
+        }
+
+        const key = `${session.storage_path}${session_id}/chunk_${chunk_number}.log`;
+        const downloadUrl = await generateDownloadUrl(key);
+
+        await logAudit(session.tenant_id, userId, "log.download", "DEVICE", session.device_id, { session_id, chunk_number });
+
+        res.json({ success: true, download_url: downloadUrl });
+
+    } catch (error) {
+        console.error("GetLogDownloadUrl Error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
+/**
+ * 7. Device Callback: Get Next Chunk URL
+ * Updates 'last_chunk_number' and 'updated_at' to track progress.
+ */
+exports.generateNextUploadUrl = async (req, res) => {
+    const { session_id } = req.params;
+    const { chunk_number } = req.body;
     const deviceId = req.user.id;
-    const tenantId = req.user.tenant_id;
 
-    if (!Array.isArray(logs) || logs.length === 0) {
-        return res.status(400).json({ success: false, message: "Logs array is required and cannot be empty." });
-    }
+    if (!chunk_number) return res.status(400).json({ success: false, message: "chunk_number is required" });
 
     try {
-        // 1. Fetch Device Context & Policy
-        const dRes = await pool.query(`
-            SELECT d.merchant_id, d.merchant_path, d.tenant_name, d.audit_logging_enabled as d_audit, t.audit_logging_enabled as t_audit, m.audit_logging_enabled as m_audit
-            FROM devices d
-            JOIN tenants t ON d.tenant_id = t.id
-            LEFT JOIN merchants m ON d.merchant_id = m.id
-            WHERE d.id = $1 AND d.deleted_at IS NULL
-        `, [deviceId]);
+        const sRes = await pool.query("SELECT * FROM device_log_sessions WHERE id = $1 AND device_id = $2", [session_id, deviceId]);
+        if (sRes.rows.length === 0) return res.status(404).json({ success: false, message: "Session context mismatch" });
 
-        if (dRes.rows.length === 0) {
-             return res.status(404).json({ success: false, message: "Device context not found or device is inactive." });
+        const session = sRes.rows[0];
+        if (session.status === 'uploaded' || session.status === 'failed') {
+            return res.status(400).json({ success: false, message: "Session is already closed." });
         }
 
-        const dev = dRes.rows[0];
-        // 🛡️ TRIPLE-LOCK RESOLUTION: Device > Merchant > Tenant > Default (True)
-        const isEnabled = dev.d_audit !== null ? dev.d_audit : (dev.m_audit !== null ? dev.m_audit : (dev.t_audit !== null ? dev.t_audit : true));
-        
-        if (!isEnabled) {
-            console.log(`[AUDIT] Policy is DISABLED for device ${deviceId}. Ignoring ${logs.length} logs.`);
-            return res.status(200).json({ success: true, message: "Logging policy is OFF" });
-        }
+        const uploadUrl = await generateUploadUrl(session.tenant_id, session.device_id, session_id, chunk_number);
 
-        // 2. Perform Batch Insertion
-        const client = await pool.connect();
-        try {
-            await client.query("BEGIN");
-            for (const log of logs) {
-                await client.query(
-                    `INSERT INTO device_audit_logs (device_id, tenant_id, tenant_name, merchant_id, merchant_path, event_type, message, timestamp)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-                    [
-                        deviceId, 
-                        tenantId, 
-                        dev.tenant_name || 'System', 
-                        dev.merchant_id, 
-                        dev.merchant_path || '/', 
-                        log.event_type || 'DEVICE_LOG', 
-                        log.message || '', 
-                        log.timestamp ? new Date(log.timestamp) : new Date()
-                    ]
-                );
-            }
-            await client.query("COMMIT");
-            console.log(`[AUDIT] Successfully stored ${logs.length} logs for device ${deviceId}`);
-            res.status(201).json({ success: true, message: `Successfully stored ${logs.length} logs` });
-        } catch (dbErr) {
-            await client.query("ROLLBACK");
-            throw dbErr;
-        } finally {
-            client.release();
-        }
+        // Track progress
+        await pool.query(
+            "UPDATE device_log_sessions SET last_chunk_number = $1, updated_at = NOW() WHERE id = $2",
+            [chunk_number, session_id]
+        );
+
+        res.json({ success: true, upload_url: uploadUrl });
     } catch (error) {
-        console.error("ReceiveDeviceLogs Error:", error);
-        res.status(500).json({ success: false, message: "Internal server error while persisting logs.", detail: error.message });
+        console.error("generateNextUploadUrl Error:", error);
+        res.status(500).json({ success: false });
     }
 };
 
 /**
- * 4. Toggle Audit Logging (Admins)
+ * 8. Device Callback: Mark Session as Uploaded
  */
-exports.toggleAuditLogging = async (req, res) => {
-    const { enabled, target_merchant_id } = req.body;
-    const { tenant_id, role, id: userId, roles = [] } = req.user;
-
-    if (typeof enabled !== "boolean") {
-        return res.status(400).json({ success: false, message: "Boolean 'enabled' is required" });
-    }
+exports.completeLogSession = async (req, res) => {
+    const { session_id } = req.params;
+    const deviceId = req.user.id;
 
     try {
-        const statusText = enabled ? "enabled" : "disabled";
+        const result = await pool.query(
+            "UPDATE device_log_sessions SET status = 'uploaded', end_time = NOW(), updated_at = NOW() WHERE id = $1 AND device_id = $2 AND status IN ('active', 'stopped') RETURNING *",
+            [session_id, deviceId]
+        );
 
-        if (target_merchant_id) {
-            // 🛡️ ROLE VALIDATION: Operator can toggle ONLY at Merchant level within their scope
-            if (role === "OPERATOR") {
-                const merchScope = roles.find(r => r.scope === "merchant");
-                if (!merchScope) {
-                    return res.status(403).json({ success: false, message: "Forbidden: Operator requires internal merchant scope." });
-                }
-                
-                const targetMerchRes = await pool.query("SELECT name_path FROM merchants WHERE id = $1 AND tenant_id = $2", [target_merchant_id, tenant_id]);
-                if (targetMerchRes.rows.length === 0) {
-                    return res.status(404).json({ success: false, message: "Merchant not found." });
-                }
+        if (result.rowCount === 0) return res.status(404).json({ success: false, message: "No active/stopped session found to complete." });
 
-                const userScope = normalizePath(merchScope.scope_path);
-                const targetPath = normalizePath(targetMerchRes.rows[0].name_path);
-
-                if (!targetPath.startsWith(userScope)) {
-                    return res.status(403).json({ success: false, message: "Forbidden: Merchant is outside your assigned scope." });
-                }
-            } else if (role !== "TENANT_ADMIN" && role !== "SUPER_ADMIN") {
-                return res.status(403).json({ success: false, message: "Unauthorized: Audit configuration requires Tenant Admin or Operator privileges" });
-            }
-
-            // Fetch old value for audit trail
-            const oldValRes = await pool.query("SELECT audit_logging_enabled FROM merchants WHERE id = $1", [target_merchant_id]);
-            const oldVal = (oldValRes.rows.length > 0) ? oldValRes.rows[0].audit_logging_enabled : null;
-
-            // Toggle for specific merchant
-            const result = await pool.query(
-                "UPDATE merchants SET audit_logging_enabled = $1 WHERE id = $2 AND tenant_id = $3 RETURNING id",
-                [enabled, target_merchant_id, tenant_id]
-            );
-            
-            if (result.rowCount === 0) {
-                return res.status(404).json({ success: false, message: "Merchant not found in your tenant" });
-            }
-
-            // 🛠️ ENHANCEMENT: Also notify all active devices under this merchant
-            const devicesRes = await pool.query("SELECT id FROM devices WHERE merchant_id = $1 AND status = 'active'", [target_merchant_id]);
-            for (const dev of devicesRes.rows) {
-                await pool.query(
-                    "INSERT INTO commands (device_id, type, payload, status, created_by, expires_at) VALUES ($1,$2,$3,'queued',$4, NOW() + INTERVAL '24 hours')",
-                    [dev.id, 'TOGGLE_LOGGING', { action: enabled ? 'ON' : 'OFF' }, userId]
-                );
-            }
-
-            await logAudit(tenant_id, userId, "MERCHANT_AUDIT_TOGGLED", "MERCHANT", target_merchant_id, { 
-                actor_role: role,
-                target: "Merchant",
-                old_value: oldVal === null ? "DEFAULT (true)" : oldVal,
-                new_value: enabled,
-                timestamp: new Date().toISOString()
-            });
-            
-            return res.json({ 
-                success: true, 
-                message: `Audit logging ${statusText} successfully for Merchant. Commands queued for ${devicesRes.rowCount} devices.` 
-            });
-        } else {
-            // Toggle for root tenant
-            if (role !== "TENANT_ADMIN" && role !== "SUPER_ADMIN") {
-                return res.status(403).json({ success: false, message: "Unauthorized: Root Audit configuration requires Tenant Admin privileges" });
-            }
-
-            // Fetch old value
-            const oldValRes = await pool.query("SELECT audit_logging_enabled FROM tenants WHERE id = $1", [tenant_id]);
-            const oldVal = (oldValRes.rows.length > 0) ? oldValRes.rows[0].audit_logging_enabled : true;
-
-            const result = await pool.query(
-                "UPDATE tenants SET audit_logging_enabled = $1 WHERE id = $2 RETURNING id",
-                [enabled, tenant_id]
-            );
-
-            if (result.rowCount === 0) {
-                return res.status(404).json({ success: false, message: "Tenant not found" });
-            }
-
-            // 🛠️ ENHANCEMENT: Also notify all active devices under this tenant
-            const devicesRes = await pool.query("SELECT id FROM devices WHERE tenant_id = $1 AND status = 'active'", [tenant_id]);
-            for (const dev of devicesRes.rows) {
-                await pool.query(
-                    "INSERT INTO commands (device_id, type, payload, status, created_by, expires_at) VALUES ($1,$2,$3,'queued',$4, NOW() + INTERVAL '24 hours')",
-                    [dev.id, 'TOGGLE_LOGGING', { action: enabled ? 'ON' : 'OFF' }, userId]
-                );
-            }
-
-            await logAudit(tenant_id, userId, "TENANT_AUDIT_TOGGLED", "TENANT", tenant_id, { 
-                actor_role: role,
-                target: "Tenant",
-                old_value: oldVal,
-                new_value: enabled,
-                timestamp: new Date().toISOString()
-            });
-            
-            return res.json({ 
-                success: true, 
-                message: `Audit logging ${statusText} successfully for Tenant. Commands queued for ${devicesRes.rowCount} devices.` 
-            });
-        }
+        console.log(`[LOG_SESSION] Session ${session_id} completed successfully for device ${deviceId}`);
+        res.json({ success: true, message: "Session marked as uploaded" });
     } catch (error) {
-        console.error("ToggleAuditLogging Error:", error);
-        res.status(500).json({ success: false, message: "Server error" });
-    }
-};
-
-/**
- * 5. Get Audit Policy (Android Device Only)
- * GET /api/v1/audit/policy
- */
-exports.getAuditPolicy = async (req, res) => {
-    try {
-        const deviceId = req.user.id;
-        
-        const dRes = await pool.query(`
-            SELECT d.audit_logging_enabled as d_audit, t.audit_logging_enabled as t_audit, m.audit_logging_enabled as m_audit
-            FROM devices d
-            JOIN tenants t ON d.tenant_id = t.id
-            LEFT JOIN merchants m ON d.merchant_id = m.id
-            WHERE d.id = $1 AND d.deleted_at IS NULL
-        `, [deviceId]);
-
-        if (dRes.rows.length === 0) {
-            return res.status(404).json({ success: false, message: "Device not found or inactive." });
-        }
-
-        const dev = dRes.rows[0];
-        // 🛡️ TRIPLE-LOCK RESOLUTION: Device > Merchant > Tenant > Default (True)
-        const isEnabled = dev.d_audit !== null ? dev.d_audit : (dev.m_audit !== null ? dev.m_audit : (dev.t_audit !== null ? dev.t_audit : true));
-
-        res.json({
-            success: true,
-            audit_logging_enabled: isEnabled
-        });
-
-    } catch (error) {
-        console.error("GetAuditPolicy Error:", error);
-        res.status(500).json({ success: false, message: "Internal server error fetching policy.", detail: error.message });
+        console.error("completeLogSession Error:", error);
+        res.status(500).json({ success: false });
     }
 };

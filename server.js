@@ -4,6 +4,7 @@ const app = require("./src/app");
 const http = require("http");
 const { initWebSocketServer } = require("./src/gateway/socket.gateway");
 const { startDeploymentExecutorJob } = require("./src/modules/deployment/deployment.controller");
+const { startAuditCleanupJob } = require("./src/modules/audit/audit.job");
 
 // 3. Set the communication channel (Port 5000)
 const PORT = process.env.PORT || 5000;
@@ -18,6 +19,7 @@ try {
   
   // Start only initialized jobs
   startDeploymentExecutorJob();
+  startAuditCleanupJob();
   
   console.log("🚀 Startup: WebSocket and Deployment Job Initialized");
 } catch (startupError) {

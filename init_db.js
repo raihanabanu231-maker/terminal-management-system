@@ -25,7 +25,6 @@ async function initDB() {
         name TEXT UNIQUE NOT NULL,
         logo_url TEXT,
         primary_color TEXT,
-        audit_logging_enabled BOOLEAN NOT NULL DEFAULT true,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         deleted_at TIMESTAMPTZ
       );
@@ -42,7 +41,6 @@ async function initDB() {
         level INTEGER NOT NULL DEFAULT 0,
         path TEXT NOT NULL,
         name_path TEXT,
-        audit_logging_enabled BOOLEAN, 
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         deleted_at TIMESTAMPTZ
       );
@@ -382,16 +380,20 @@ async function initDB() {
       );
     `);
 
-    // 19b. Device Audit Logs (New Requirement)
+    // 19b. Device Log Sessions (New Architecture)
     await client.query(`
-      CREATE TABLE IF NOT EXISTS device_audit_logs (
+      CREATE TABLE IF NOT EXISTS device_log_sessions (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
         tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-        merchant_id UUID REFERENCES merchants(id) ON DELETE SET NULL,
-        event_type TEXT NOT NULL,
-        message TEXT NOT NULL,
-        timestamp TIMESTAMPTZ NOT NULL,
+        started_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        start_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        end_time TIMESTAMPTZ,
+        status TEXT NOT NULL CHECK (status IN ('active', 'stopped', 'uploaded', 'failed')),
+        log_level TEXT NOT NULL DEFAULT 'INFO',
+        storage_path TEXT,
+        last_chunk_number INTEGER NOT NULL DEFAULT 0,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);

@@ -2,15 +2,18 @@ const express = require("express");
 const router = express.Router();
 const { 
     getAuditLogs, 
-    getDeviceAuditLogs, 
-    toggleAuditLogging, 
-    receiveDeviceLogs, 
-    getAuditPolicy 
+    getLogSessions, 
+    getLogSessionChunks,
+    startLogSession, 
+    stopLogSession, 
+    getLogDownloadUrl,
+    generateNextUploadUrl,
+    completeLogSession
 } = require("./audit.controller");
 const { verifyToken } = require("../../middleware/auth.middleware");
 const { authorizeRoles } = require("../../middleware/role.middleware");
 
-// 1. Get User/System Audit Logs (Admins)
+// 1. Get System Audit Logs
 router.get(
     "/",
     verifyToken,
@@ -18,38 +21,64 @@ router.get(
     getAuditLogs
 );
 
-// 2. Get Android Device Audit Logs (Admins/Operators)
-router.get(
-    "/devices",
-    verifyToken,
-    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR", "DEVICE"),
-    getDeviceAuditLogs
-);
+// --- NEW LOGGING SYSTEM ---
 
-// 3. Toggle Device Audit Logging (Admins/Operators)
-router.put(
-    "/config",
+// 2. List Logging Sessions
+router.get(
+    "/sessions",
     verifyToken,
     authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR"),
-    toggleAuditLogging
+    getLogSessions
 );
 
-// 4. Submit Android Device Logs (Android Device Only)
-// Note: This endpoint is protected by DEVICE role. 
-// It enforces the 'audit_logging_enabled' flag at the API level.
-router.post(
-    "/devices/log",
-    verifyToken,
-    authorizeRoles("DEVICE"),
-    receiveDeviceLogs
-);
-
-// 5. Get Audit Policy (Android Device Only)
+// 2b. List Chunks for a Session
 router.get(
-    "/policy",
+    "/sessions/:session_id/chunks",
+    verifyToken,
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR"),
+    getLogSessionChunks
+);
+
+// 3. Start Logging Session
+router.post(
+    "/sessions/start",
+    verifyToken,
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR"),
+    startLogSession
+);
+
+// 4. Stop Logging Session
+router.post(
+    "/sessions/:session_id/stop",
+    verifyToken,
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR"),
+    stopLogSession
+);
+
+// 5. Download Specific Chunk
+router.get(
+    "/sessions/:session_id/download",
+    verifyToken,
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR"),
+    getLogDownloadUrl
+);
+
+// --- DEVICE CALLBACKS (Role: DEVICE) ---
+
+// 6. Get Next Chunk Upload URL (Tracks progress)
+router.post(
+    "/sessions/:session_id/upload-url",
     verifyToken,
     authorizeRoles("DEVICE"),
-    getAuditPolicy
+    generateNextUploadUrl
+);
+
+// 7. Mark Session as Completed/Uploaded
+router.post(
+    "/sessions/:session_id/complete",
+    verifyToken,
+    authorizeRoles("DEVICE"),
+    completeLogSession
 );
 
 module.exports = router;

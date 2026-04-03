@@ -51,20 +51,10 @@ exports.logAudit = async (tenantId, userId, action, resourceType, resourceId, de
             );
         } catch (e) { console.error("Audit System Log Insert Fail:", e.message); }
 
-        // 4. Save to Device Audit Table (Explicit ID)
-        if (resourceType === 'DEVICE' && resourceId) {
-            const devLogId = crypto.randomUUID();
-            try {
-                const msg = `Action: ${action}${details ? ' - Details: ' + JSON.stringify(details) : ''}`.substring(0, 1000);
-                await pool.query(
-                    `INSERT INTO device_audit_logs (id, device_id, tenant_id, tenant_name, merchant_id, merchant_path, event_type, message, timestamp)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
-                    [devLogId, resourceId, tenantId, tenantName, merchantId, merchantPath, action, msg]
-                );
-            } catch (e) { console.error("Audit Device Log Insert Fail:", e.message); }
-        }
-
+        // 4. Note: device_audit_logs is removed per session-logging spec.
+        // Session-based logging should be handled via audit.controller's start/stop.
     } catch (globalError) {
+
         console.error("FATAL AUDIT ERROR:", globalError.message);
     }
 };

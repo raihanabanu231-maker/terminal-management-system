@@ -274,16 +274,10 @@ exports.ackCommand = async (req, res) => {
         const status = success ? 'completed' : 'failed';
         await pool.query("UPDATE commands SET status = $1, acked_at = NOW(), payload = payload || $2::jsonb WHERE id = $3", [status, JSON.stringify({ result_data }), commandId]);
 
-        const cmdRes = await pool.query("SELECT c.type, c.payload, d.tenant_id FROM commands c JOIN devices d ON c.device_id = d.id WHERE c.id = $1", [commandId]);
+        const cmdRes = await pool.query("SELECT c.type, d.tenant_id FROM commands c JOIN devices d ON c.device_id = d.id WHERE c.id = $1", [commandId]);
         if (cmdRes.rows.length > 0) {
-            const { type, payload, tenant_id } = cmdRes.rows[0];
+            const { type, tenant_id } = cmdRes.rows[0];
             await logAudit(tenant_id, null, `${type}_${status.toUpperCase()}`, 'DEVICE', deviceId, { result: result_data });
-
-            // 🎯 SYNC: Update the device policy when the toggle command succeeds
-            if (type === 'TOGGLE_LOGGING' && success) {
-                const isEnabled = payload?.action === 'ON';
-                await pool.query("UPDATE devices SET audit_logging_enabled = $1 WHERE id = $2", [isEnabled, deviceId]);
-            }
         }
 
         res.json({ success: true });
