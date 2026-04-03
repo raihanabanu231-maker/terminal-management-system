@@ -393,6 +393,32 @@ exports.getCommandStatus = async (req, res) => {
     }
 };
 
+exports.getDeviceCommands = async (req, res) => {
+    try {
+        const { role: userRole, tenant_id: userTenantId } = req.user;
+        const { id } = req.params;
+
+        // 🛡️ Scope check
+        const checkQuery = userRole === "SUPER_ADMIN" ?
+            "SELECT id FROM devices WHERE id = $1" :
+            "SELECT id FROM devices WHERE id = $1 AND tenant_id = $2";
+        const checkParams = userRole === "SUPER_ADMIN" ? [id] : [id, userTenantId];
+
+        const deviceCheck = await pool.query(checkQuery, checkParams);
+        if (deviceCheck.rows.length === 0) return res.status(404).json({ success: false, message: "Device not found or unauthorized" });
+
+        const cmdRes = await pool.query(
+            "SELECT id, type, payload, status, last_error, created_at, sent_at, acked_at FROM commands WHERE device_id = $1 ORDER BY created_at DESC LIMIT 50",
+            [id]
+        );
+
+        res.json({ success: true, commands: cmdRes.rows });
+    } catch (err) {
+        console.error("getDeviceCommands Error:", err);
+        res.status(500).json({ success: false });
+    }
+};
+
 exports.updateDevice = async (req, res) => {
     try {
         const { role: userRole, tenant_id: userTenantId } = req.user;
