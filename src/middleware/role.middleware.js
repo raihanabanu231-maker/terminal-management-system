@@ -9,7 +9,11 @@ exports.authorizeRoles = (...roles) => {
     if (!roles.includes(req.user.role)) {
       return res.status(403).json({
         success: false,
-        message: "Forbidden: You don't have permission"
+        message: `Forbidden: You don't have permission.`,
+        debug: {
+            your_role: req.user.role,
+            required_roles: roles
+        }
       });
     }
     next();
