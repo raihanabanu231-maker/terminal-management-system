@@ -9,6 +9,7 @@ const {
     getDevices,
     getDeviceById,
     getCommandStatus,
+    getDeviceCommands,
     updateDevice,
     deleteDevice,
     receiveHeartbeat,
@@ -115,6 +116,14 @@ router.get(
     verifyToken,
     authorizeRoles("TENANT_ADMIN", "OPERATOR", "VIEWER"),
     getCommandStatus
+);
+
+// Get All Commands for a device (History)
+router.get(
+    "/:id/commands",
+    verifyToken,
+    authorizeRoles("TENANT_ADMIN", "OPERATOR", "VIEWER"),
+    getDeviceCommands
 );
 
 // Update Device
