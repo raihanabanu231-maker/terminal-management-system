@@ -50,7 +50,7 @@ router.get(
 router.post(
     "/enroll-token",
     verifyToken,
-    authorizeRoles("TENANT_ADMIN", "OPERATOR"),
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR"),
     generateEnrollmentToken
 );
 
@@ -58,7 +58,7 @@ router.post(
 router.get(
     "/enroll-token/:id/status",
     verifyToken,
-    authorizeRoles("TENANT_ADMIN", "OPERATOR"),
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR"),
     checkEnrollmentStatus
 );
 
@@ -98,7 +98,7 @@ router.get(
 router.post(
     "/:deviceId/command",
     verifyToken,
-    authorizeRoles("TENANT_ADMIN", "OPERATOR"),
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR"),
     sendDeviceCommand
 );
 
@@ -114,7 +114,7 @@ router.post(
 router.get(
     "/commands/:commandId/status",
     verifyToken,
-    authorizeRoles("TENANT_ADMIN", "OPERATOR", "VIEWER"),
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR", "VIEWER"),
     getCommandStatus
 );
 
@@ -122,7 +122,7 @@ router.get(
 router.get(
     "/:id/commands",
     verifyToken,
-    authorizeRoles("TENANT_ADMIN", "OPERATOR", "VIEWER"),
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR", "VIEWER"),
     getDeviceCommands
 );
 
@@ -130,7 +130,7 @@ router.get(
 router.put(
     "/:id",
     verifyToken,
-    authorizeRoles("TENANT_ADMIN", "OPERATOR"),
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR"),
     updateDevice
 );
 
@@ -138,7 +138,7 @@ router.put(
 router.delete(
     "/:id",
     verifyToken,
-    authorizeRoles("TENANT_ADMIN", "OPERATOR"),
+    authorizeRoles("SUPER_ADMIN", "TENANT_ADMIN", "OPERATOR"),
     deleteDevice
 );
 
