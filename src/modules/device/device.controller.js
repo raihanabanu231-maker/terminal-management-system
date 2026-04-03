@@ -74,6 +74,7 @@ exports.generateEnrollmentToken = async (req, res) => {
 
         res.json({
             success: true,
+            enrollment_token_id: tokenRes.rows[0].id,
             token: token,
             qr_code: qrCodeImage,
             expires_at: expiresAt,
