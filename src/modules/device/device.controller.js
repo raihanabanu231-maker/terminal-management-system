@@ -238,18 +238,14 @@ exports.sendDeviceCommand = async (req, res) => {
             }
         }
 
-        const cmdRes = await pool.query(
-            "INSERT INTO commands (device_id, type, payload, status, created_by, expires_at) VALUES ($1,$2,$3,'queued',$4, NOW() + INTERVAL '24 hours') RETURNING id",
+        await pool.query(
+            "INSERT INTO commands (device_id, type, payload, status, created_by, expires_at) VALUES ($1,$2,$3,'queued',$4, NOW() + INTERVAL '24 hours')",
             [deviceId, type, payload || {}, req.user.id]
         );
 
         await logAudit(device.tenant_id, req.user.id, `${type}_INITIATED`, 'DEVICE', deviceId, { action: type, payload });
 
-        const { sendCommand } = require("../../gateway/socket.gateway");
-        const success = sendCommand(deviceId, { type: "command", id: cmdRes.rows[0].id, cmd: type, payload });
-        if (success) await pool.query("UPDATE commands SET status = 'sent', sent_at = NOW() WHERE id = $1", [cmdRes.rows[0].id]);
-
-        res.json({ success: true, command_id: cmdRes.rows[0].id });
+        res.json({ success: true, message: "Command queued successfully for polling." });
     } catch (err) {
         console.error("sendDeviceCommand Error:", err);
         res.status(500).json({ success: false, message: "Internal server error" });
