@@ -504,6 +504,6 @@ exports.checkEnrollmentStatus = async (req, res) => {
         res.json({ success: true, data: r.rows[0] });
     } catch (err) {
         console.error("checkEnrollmentStatus Error:", err);
-        res.status(500).json({ success: false });
+        res.status(500).json({ success: false, error: err.message });
     }
 };
