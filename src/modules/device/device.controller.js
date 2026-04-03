@@ -490,12 +490,18 @@ exports.checkEnrollmentStatus = async (req, res) => {
         const { role: userRole, tenant_id: userTenantId } = req.user;
         const { id } = req.params;
 
-        // Logic: Try to find by token ID OR find the latest token for this Tenant
-        let query = `
-            SELECT * FROM enrollment_tokens 
-            WHERE (id = $1 OR tenant_id = $1)
-        `;
-        const params = [id];
+        // Logic: Try to find by token ID, Tenant ID, OR the Security Token Hash
+        let query = "";
+        let params = [id];
+
+        // 🛡️ Type Safety: Only query UUID columns if 'id' looks like a UUID
+        const isUuid = /^[0-9a-fA-F-]{36}$/.test(id);
+
+        if (isUuid) {
+            query = `SELECT * FROM enrollment_tokens WHERE (id = $1 OR tenant_id = $1 OR token_hash = $1)`;
+        } else {
+            query = `SELECT * FROM enrollment_tokens WHERE token_hash = $1`;
+        }
 
         if (userRole !== "SUPER_ADMIN") {
             params.push(userTenantId);
